@@ -12,7 +12,7 @@ This proposal takes the role lookup out of the authorization server and puts the
 
 ### Relationship to existing mechanisms
 
-| | Shared password / app passwords | Sign in as the account (authorization-server hooks) | Account delegates (this proposal) |
+| | Shared password / app passwords | Sign in as the account | Account delegates (this proposal) |
 |---|---|---|---|
 | Who authenticates | nobody in particular | the person, via a nested login at the account's AS | the person, at their own PDS |
 | What the app holds | a session for the account | a second session for the account | its ordinary session for the person |
