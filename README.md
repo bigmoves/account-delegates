@@ -4,6 +4,34 @@ A working model of [proposal 0017, Account Delegates](./docs/0017-account-delega
 
 The problem it answers: a community, a brand, or any shared identity is one DID, and several people need to write to it. Today that means a shared password or app passwords passed around. The prototype shows the alternative the proposal describes. The account names its **delegates** and what each may do. A delegate authenticates **as themselves**, with a service auth token from their own PDS, names the account as `repo`, and the account's PDS commits the write under the account's key and remembers who asked.
 
+## The flow
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant App as App (alice signed in)
+  participant APDS as alice's PDS
+  participant CPDS as club's PDS
+  participant Host as Managing app<br/>(community host)
+  Note over App,CPDS: alice never signs in as the club. One login, one session.
+  App->>APDS: getServiceAuth(aud = club's PDS, lxm = createRecord)
+  APDS-->>App: service auth token<br/>iss = alice · 60 s · single-use jti
+  App->>CPDS: createRecord(repo = club, collection, record)<br/>Authorization: Bearer token
+  CPDS->>CPDS: verify signature against alice's DID document<br/>check aud, lxm, consume jti
+  alt policy: delegate-list
+    CPDS->>CPDS: look alice up in the club's delegate list
+  else policy: managing-app
+    CPDS->>Host: checkDelegate(account = club, did = alice)<br/>service auth signed as the club
+    Host->>Host: alice's role → permission strings
+    Host-->>CPDS: { permissions, expiresAt }
+    CPDS->>CPDS: cache until expiresAt
+  end
+  CPDS->>CPDS: bound the write: permissions cover<br/>create social.grain.group.item?
+  CPDS->>CPDS: commit under the club's key · sequence to the firehose<br/>log (uri, alice, now)
+  CPDS-->>App: { uri: at://club/…, cid, commit }
+  Note over CPDS: not a delegate → 403 NotDelegate<br/>outside the bounds → 403 DelegateScopeMissing<br/>token reused → 401 ReplayedToken
+```
+
 ## Run it
 
 You need Node 22.13 or newer and pnpm. Nothing else: the atproto spaces alpha comes from npm.
