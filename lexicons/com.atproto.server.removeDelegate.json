@@ -1,0 +1,14 @@
+{
+  "lexicon": 1,
+  "id": "com.atproto.server.removeDelegate",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Remove a delegate. Takes effect on the next write.",
+      "input": {
+        "encoding": "application/json",
+        "schema": { "type": "object", "required": ["did"], "properties": { "did": { "type": "string", "format": "did" } } }
+      }
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "account-delegates",
+  "description": "A runnable prototype of proposal 0017, Account Delegates: writing to an atproto account you do not sign in to, bounded by the account and attributed to you.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "demo": "node --import tsx src/demo.ts",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "node scripts/patch-car-varint.mjs"
+  },
+  "dependencies": {
+    "@atproto/crypto": "0.0.0-spaces-alpha-20260910230440",
+    "@atproto/identity": "0.0.0-spaces-alpha-20260910230440",
+    "@atproto/lex-data": "0.0.0-spaces-alpha-20260910230440",
+    "@atproto/oauth-scopes": "0.0.0-spaces-alpha-20260910230440",
+    "@atproto/pds": "0.0.0-spaces-alpha-20260910230440",
+    "@atproto/xrpc-server": "0.0.0-spaces-alpha-20260910230440",
+    "@did-plc/server": "0.0.1",
+    "express": "^4.21.0",
+    "uint8arrays": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

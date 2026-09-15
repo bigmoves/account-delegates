@@ -1,0 +1,28 @@
+{
+  "lexicon": 1,
+  "id": "com.atproto.server.listDelegatedWrites",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "The account's attribution log: every write a delegate made as the account, newest first.",
+      "parameters": {
+        "type": "params",
+        "properties": {
+          "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 },
+          "cursor": { "type": "string" }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["writes"],
+          "properties": {
+            "cursor": { "type": "string" },
+            "writes": { "type": "array", "items": { "type": "ref", "ref": "com.atproto.server.defs#delegatedWrite" } }
+          }
+        }
+      }
+    }
+  }
+}

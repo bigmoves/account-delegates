@@ -1,0 +1,25 @@
+{
+  "lexicon": 1,
+  "id": "com.atproto.server.putDelegate",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Add or replace a delegate entry. Requires the account:delegates permission; never available to a delegate.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["did", "permissions"],
+          "properties": {
+            "did": { "type": "string", "format": "did" },
+            "permissions": { "type": "array", "items": { "type": "string", "maxLength": 512 } },
+            "label": { "type": "string", "maxGraphemes": 64 },
+            "expiresAt": { "type": "string", "format": "datetime" }
+          }
+        }
+      },
+      "output": { "encoding": "application/json", "schema": { "type": "ref", "ref": "com.atproto.server.defs#delegate" } },
+      "errors": [{ "name": "InvalidPermission", "description": "A permission other than repo:, space:, or blob:." }]
+    }
+  }
+}

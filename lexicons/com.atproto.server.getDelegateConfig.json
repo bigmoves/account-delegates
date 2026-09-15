@@ -1,0 +1,22 @@
+{
+  "lexicon": 1,
+  "id": "com.atproto.server.getDelegateConfig",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "The account's delegate policy, managing app, and delegates. Requires the account:delegates permission.",
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["policy", "delegates"],
+          "properties": {
+            "policy": { "type": "string", "knownValues": ["delegate-list", "managing-app"] },
+            "managingApp": { "type": "string" },
+            "delegates": { "type": "array", "items": { "type": "ref", "ref": "com.atproto.server.defs#delegate" } }
+          }
+        }
+      }
+    }
+  }
+}

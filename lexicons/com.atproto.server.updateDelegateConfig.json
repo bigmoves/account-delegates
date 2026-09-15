@@ -1,0 +1,21 @@
+{
+  "lexicon": 1,
+  "id": "com.atproto.server.updateDelegateConfig",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Set the account's delegate policy. Requires the account:delegates permission; never available to a delegate.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["policy"],
+          "properties": {
+            "policy": { "type": "string", "knownValues": ["delegate-list", "managing-app"] },
+            "managingApp": { "type": "string", "description": "Required when policy is managing-app." }
+          }
+        }
+      }
+    }
+  }
+}
