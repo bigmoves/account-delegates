@@ -200,6 +200,32 @@ com.atproto.repo.delegatedWrites
 
 The app does not need to know why the user may write to that account, and does not learn it. A refusal is a `403` with a named error. The user experience is one login, one session, and a button that either works or says why not.
 
+### There is no sign-in as the account
+
+This is the point most worth being explicit about, because it is the opposite of how the shared-account problem is usually solved. A person never logs in as the community. The flow, from their side:
+
+1. **Sign in as yourself, once.** Ordinary OAuth against your own PDS. Among the permissions the app requests is the delegated-writes set above. That is the only consent that ever happens.
+2. **Choose the account in the app.** "Acting as Peninsula Riders" is a mode the app shows, not a second session. Nothing about the person's session changes.
+3. **Each write, the app addresses the account.** It resolves the account's DID to its PDS, asks the person's own PDS for a service auth token for that PDS and that method, and sends the write with `repo` set to the account.
+4. **The account's PDS decides.** It verifies the token against the person's DID document, checks the delegation under the account's policy, bounds the write, commits it as the account, and logs the person.
+5. **Reads need nothing new.** The account's public repo is public. Its permissioned spaces the person reads as themselves, with whatever standing they have there.
+
+The account's own credentials still exist, but they are the controller's root credential, like a PDS password: used to set the policy and edit the list, never to post.
+
+Compare a sign-in-as design, where the app signs in with the account's identifier, lands on the account's authorization server, and that server must authenticate the person and know their standing before it can issue a narrowed session. That is two logins, two sessions, and an authorization server that has to be taught the policy. Here there is one login, one session, and the policy is a fact on the account that a stock PDS reads. Apps that cannot address a `repo` other than the session's own are the case for [sign-in-as done generically](#future-work), on top of this primitive.
+
+### Discovery
+
+Nothing above tells an app which accounts a person may act for. `getDelegateConfig` is the account's view; there is no delegate's view, and the proposal does not add one. An app learns it out of band today: a community host publishes its roster, a brand tells its staff, or the person picks an account and the write either works or says `NotDelegate`.
+
+That is a real gap, and the options each cost something:
+
+- **A query on the person's PDS**, `listDelegations`, answering "which accounts name me". Their PDS has no way to know; it would need every account's PDS to notify it on `putDelegate` and every managing app to notify it on a role change, which is a fan-out the rest of the design avoids.
+- **A record the account or its managing app publishes**, in the account's public repo, naming its delegates. Simple and crawlable, but it makes the delegate list public, which a brand may not want, and under `managing-app` there is no list to publish.
+- **Leave it to the managing app.** A community host already knows its members and roles, and is the natural place for "your communities". A brand account with a list can answer from `getDelegateConfig` through whatever tooling its staff use.
+
+The proposal takes the third for now, on the grounds that discovery is a product surface rather than a protocol one and that the first two both leak or fan out. It is listed under [open questions](#open-questions) because that judgment may not survive contact with general-purpose clients.
+
 ## Managing-app interaction
 
 ```
@@ -367,3 +393,4 @@ The opensocial community host, which today embeds a PDS for no reason other than
 - Should `checkDelegate` receive the intended collection and action, so a managing app can answer narrowly per write rather than return a delegate's whole ceiling? The whole-ceiling answer caches better and mirrors how OAuth grants work; the per-write answer leaks less.
 - Should delegated writes be marked in the account's repo at all, for example as an optional commit field that relays ignore? This proposal says no, on the grounds that the account chose to let this happen and readers should not have to reason about it. It is the question most likely to come back.
 - Whether `getDelegationToken` belongs on the delegated surface, or whether communities should simply keep the records their moderators need to read in a space those moderators are members of.
+- Delegate-side discovery. A person has no protocol-level way to list the accounts that name them; see [Discovery](#discovery). If general-purpose clients need it, a published record in the account's repo is the least machinery, at the cost of making the list public.
