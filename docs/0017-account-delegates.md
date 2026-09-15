@@ -1,20 +1,18 @@
 # 0017 Account Delegates
 
-Companion material: the [opensocial.community prototype](https://github.com/bigmoves/opensocial) and its write-up of [acting as a community through OAuth](https://github.com/bigmoves/opensocial/blob/main/docs/outcomes/acting-as-a-community.md), which is the approach this proposal replaces.
-
 ## Introduction
 
 Some atproto accounts are not people. A community, a brand, a newsroom, a bot fleet, a band: one DID, one repo, and several humans who legitimately write to it. Today the protocol offers those humans exactly one thing, the account's credentials. In practice that means a shared password, or app passwords handed around a group chat. Every write looks the same on the wire, nobody can be removed without rotating the secret, and nothing records who actually did what.
 
 The permissioned data proposal makes this sharper. A community is naturally a space authority: a DID with spaces under it, a host that decides who may read, and members whose records live in their own repos inside those spaces. Almost everything a community does fits that shape without the community itself ever writing anything. But a few things do not. Pinning a thread, accepting a submission into a pool, applying a label, publishing the community's own profile in an app: these are records the *community* has to author, and the person authoring them is a moderator who should never hold the community's keys.
 
-We built the obvious answer first. The community host embeds a PDS, so it is the community account's OAuth authorization server, and when an app signs in with the community's identifier the host runs a nested login against the person's own PDS, looks up their role, and narrows the grant. It works end to end and needs no changes in the app. It also needs four patches to the OAuth provider, a second session in every app, a nested login on every sign-in, and above all it requires the community's account to live on a PDS that has been taught about roles. The community cannot be an ordinary account on an ordinary PDS.
+The obvious answer is to let a person sign in *as* the account. The account's OAuth authorization server, when an app signs in with the account's identifier, runs a nested login against the person's own PDS, looks up their standing, and narrows the grant to what that standing allows. This can be made to work end to end with no changes in the app. But it needs hooks in the OAuth provider, a second session in every app, a nested login on every sign-in, and above all it requires the account to live on a PDS whose authorization server has been taught the policy. A community run this way cannot be an ordinary account on an ordinary PDS.
 
 This proposal takes the role lookup out of the authorization server and puts the *fact* it was looking up where it belongs: on the account. An account names its **delegates**, the DIDs that may write to it and how far. A delegate writes to the account by authenticating **as themselves**, with a service auth token from their own PDS, and naming the account as the `repo`. The account's PDS checks the delegation, bounds the write, commits it under the account's key, and remembers who asked. No new token class, no OAuth change, no second session, and the account can live anywhere.
 
 ### Relationship to existing mechanisms
 
-| | Shared password / app passwords | Sign in as the account (opensocial patches) | Account delegates (this proposal) |
+| | Shared password / app passwords | Sign in as the account (authorization-server hooks) | Account delegates (this proposal) |
 |---|---|---|---|
 | Who authenticates | nobody in particular | the person, via a nested login at the account's AS | the person, at their own PDS |
 | What the app holds | a session for the account | a second session for the account | its ordinary session for the person |
@@ -270,7 +268,7 @@ The managing app is the only party that knows what a "moderator" is. It projects
 Peninsula Riders is a cycling club. Its account `did:plc:club` lives on `pds.example`, an ordinary PDS. Its community host, `did:web:host.example#community`, holds the roles.
 
 1. At creation the founder, holding the club's session, sets `policy: managing-app, managingApp: did:web:host.example#community`. The founder's own account is `did:plc:fay` on `bsky.social`.
-2. The host, needing to write the club's public roster, is itself a delegate: the founder answers its own `checkDelegate` for `did:web:host.example` with `repo:community.opensocial.*`. The host holds no credential for the club, ever.
+2. The host, needing to write the club's public roster, is itself a delegate: it answers its own `checkDelegate` for `did:web:host.example` with `repo:community.example.roster`. The host holds no credential for the club, ever.
 3. Alice, `did:plc:alice` on `bsky.social`, is made a moderator on the host. Nothing happens at `pds.example`.
 4. Alice opens Grain, an app that knows nothing about the club's host. Her session there has `rpc:com.atproto.repo.applyWrites?aud=*` from the delegated-writes permission set she approved at sign-in.
 5. A member offered a gallery to the club's pool. Alice taps *Accept*. Grain resolves `did:plc:club` to `pds.example`, asks `bsky.social` for a service auth token addressed to `did:web:pds.example#atproto_pds` bound to `applyWrites`, and calls `applyWrites` at `pds.example` with `repo: did:plc:club` and one create of `social.grain.group.item`.
@@ -375,11 +373,11 @@ Against the `permissioned-data-alpha` branch of `bluesky-social/atproto` at `382
 - **Managing app.** `simplespace/manager.ts` already implements the pattern of signing a call as the authority and caching a policy answer; `checkDelegate` follows it.
 - **Nothing** in `@atproto/oauth-provider`, `@atproto/oauth-provider-ui`, the token store, the repo format, or the sync protocol.
 
-The opensocial community host, which today embeds a PDS for no reason other than to be the community's authorization server, becomes a managing app that answers `checkDelegate` from its role records and holds no keys. Its four provider patches are retired.
+A community host built this way is a managing app that answers `checkDelegate` from its role records. It holds no keys and no credential for any community, and the community's account can live on any PDS.
 
 ## Future work
 
-**Sign-in-as, done generically.** The opensocial patches taught an OAuth provider to let a person sign in as an account by consulting domain-specific hooks. With delegates on the account, a provider could offer the same thing with *no* hooks: when a client asks to sign in as account X and the person authenticating is a delegate of X, issue a token for X narrowed to their delegate permissions, with `act.sub` set. The delegate configuration is exactly the policy those hooks were standing in for. This would give apps that must never learn about delegation a session-shaped alternative, on top of the same primitive.
+**Sign-in-as, done generically.** An OAuth provider can be taught to let a person sign in as an account by consulting domain-specific hooks. With delegates on the account, a provider could offer the same thing with *no* hooks: when a client asks to sign in as account X and the person authenticating is a delegate of X, issue a token for X narrowed to their delegate permissions, with `act.sub` set. The delegate configuration is exactly the policy those hooks were standing in for. This would give apps that must never learn about delegation a session-shaped alternative, on top of the same primitive.
 
 **Permission sets in delegate entries.** A managing app projecting "moderator" onto twenty permission strings would rather name one set. Sets today are scoped to their publisher's NSID authority, which is the wrong boundary here; whether to relax that for delegate entries, or to define a role-shaped set type, is open.
 
