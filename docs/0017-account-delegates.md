@@ -1,7 +1,5 @@
 # 0017 Account Delegates
 
-*This is a proposal, not a specification. It is drafted in the form of the other documents in this repository, but it comes from outside Bluesky: it grew out of building a community host on the [permissioned data](../0016-permissioned-data/) alpha and hitting the same wall three different ways. Details, names, and behaviors are all open.*
-
 Companion material: the [opensocial.community prototype](https://github.com/bigmoves/opensocial) and its write-up of [acting as a community through OAuth](https://github.com/bigmoves/opensocial/blob/main/docs/outcomes/acting-as-a-community.md), which is the approach this proposal replaces.
 
 ## Introduction
