@@ -25,8 +25,14 @@ export async function startPds(opts: {
   plcUrl: string;
   dataDir: string;
   log: (line: string) => void;
+  /**
+   * Resolve every lexicon (permission sets, spaces) from this DID's repo
+   * instead of the NSID's DNS authority. Dev only; the browser demo uses it to
+   * publish the delegated-writes permission set locally.
+   */
+  lexiconDidAuthority?: string;
 }): Promise<RunningPds> {
-  const { name, port, plcUrl, dataDir, log } = opts;
+  const { name, port, plcUrl, dataDir, log, lexiconDidAuthority } = opts;
   const dir = join(dataDir, name);
   mkdirSync(join(dir, "blobs"), { recursive: true });
   const rotation = await Secp256k1Keypair.create({ exportable: true });
@@ -49,6 +55,7 @@ export async function startPds(opts: {
     inviteRequired: false,
     disableSsrfProtection: true,
     serviceName: `${name} (with account delegates)`,
+    lexiconDidAuthority,
     // required by the config schema; nothing here proxies to them
     bskyAppViewUrl: "https://appview.invalid",
     bskyAppViewDid: "did:example:invalid",

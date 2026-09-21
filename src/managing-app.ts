@@ -7,6 +7,8 @@ import { verifyJwt } from "@atproto/xrpc-server";
 import express from "express";
 
 const CHECK_DELEGATE = "com.atproto.server.checkDelegate";
+/** The host's own method, in its own namespace: nothing in the protocol defines it. */
+const LIST_MEMBERSHIPS = "community.example.listMemberships";
 
 export type Role = "admin" | "moderator" | "member";
 
@@ -62,6 +64,22 @@ export async function startManagingApp(opts: {
     const permissions = role ? ROLE_PERMISSIONS[role] : [];
     log(`  host: ${account.slice(0, 16)}… asks about ${who.slice(0, 16)}… → ${role ?? "no role"}`);
     res.json({ permissions, expiresAt: new Date(Date.now() + ttlMs).toISOString() });
+  });
+
+  // Discovery, the host's way: "which accounts hold a role for this DID here".
+  // This is the RFC's third option, the managing app answering from what it
+  // already knows. It is host-scoped by nature: a host can only list its own
+  // communities. Left unauthenticated for the demo; a real host would want the
+  // caller's service auth before revealing their memberships.
+  app.get(`/xrpc/${LIST_MEMBERSHIPS}`, (req, res) => {
+    const who = String(req.query.did ?? "");
+    const memberships: { account: string; role: Role }[] = [];
+    for (const [account, byDid] of roles) {
+      const role = byDid.get(who);
+      if (role) memberships.push({ account, role });
+    }
+    log(`  host: ${who.slice(0, 16)}… asks for their memberships → ${memberships.length}`);
+    res.json({ memberships });
   });
 
   const server = app.listen(port);

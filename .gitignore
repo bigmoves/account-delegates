@@ -1,2 +1,4 @@
 node_modules
 .data
+.data-app/
+.DS_Store

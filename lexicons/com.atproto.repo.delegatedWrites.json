@@ -1,0 +1,25 @@
+{
+  "lexicon": 1,
+  "id": "com.atproto.repo.delegatedWrites",
+  "defs": {
+    "main": {
+      "type": "permission-set",
+      "title": "Write to accounts that have made you a delegate",
+      "detail": "Sign writes to another account's repository as yourself. That account's own PDS decides whether to accept them.",
+      "permissions": [
+        {
+          "type": "permission",
+          "resource": "rpc",
+          "aud": "*",
+          "lxm": [
+            "com.atproto.repo.createRecord",
+            "com.atproto.repo.putRecord",
+            "com.atproto.repo.deleteRecord",
+            "com.atproto.repo.applyWrites",
+            "com.atproto.repo.uploadBlob"
+          ]
+        }
+      ]
+    }
+  }
+}

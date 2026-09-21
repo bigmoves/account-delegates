@@ -257,11 +257,21 @@ export function delegatesRouter(opts: Opts): Router {
   });
 
   // --- Management, by the account itself ------------------------------------
-  // Upstream: api/com/atproto/server/, next to createAppPassword.ts, gated by
-  // the `account:delegates` permission. Here: any session for the account.
+  // Upstream: api/com/atproto/server/, next to createAppPassword.ts. RFC
+  // § Managing delegates: an OAuth session holding `account:delegates`, or a
+  // legacy full-access session. Never an app password, never a delegate.
 
   async function accountOf(req: Request, res: Response): Promise<string> {
-    const verify = ctx.authVerifier.authorization({ authorize: () => {} });
+    const verify = ctx.authVerifier.authorization({
+      scopes: ["com.atproto.access"] as any,
+      authorize: (permissions: any) => {
+        // `delegates` is the attribute the RFC adds; scripts/patch-account-delegates.mjs
+        // teaches the installed scope parser about it.
+        if (!permissions.allowsAccount({ attr: "delegates", action: "manage" })) {
+          throw new XrpcError(403, "ScopeMissing", "this session lacks account:delegates?action=manage");
+        }
+      },
+    } as any);
     const out = await verify({ req, res, params: {} } as any);
     if (!("credentials" in out)) throw new XrpcError(out.status, out.error ?? "AuthRequired", out.message ?? "authentication required");
     return out.credentials.did;

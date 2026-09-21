@@ -58,6 +58,9 @@ importers:
       '@atproto/lex-data':
         specifier: 0.0.0-spaces-alpha-20260910230440
         version: 0.0.0-spaces-alpha-20260910230440
+      '@atproto/oauth-client-node':
+        specifier: 0.0.0-spaces-alpha-20260910230440
+        version: 0.0.0-spaces-alpha-20260910230440
       '@atproto/oauth-scopes':
         specifier: 0.0.0-spaces-alpha-20260910230440
         version: 0.0.0-spaces-alpha-20260910230440
@@ -83,6 +86,9 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.4
+      puppeteer-core:
+        specifier: ^25.11.0
+        version: 25.11.0
       tsx:
         specifier: ^4.20.0
         version: 4.23.13
@@ -110,6 +116,10 @@ packages:
 
   '@atproto-labs/handle-resolver@0.0.0-spaces-alpha-20260910230440':
     resolution: {integrity: sha512-1opeSZBtnrHQE22MRwlHuXXpaIw3vQ0X/5NMG62wwVrMWrIcServDD/7/vKTXF6D8HG4lrORd0KhV/CyEMcMqQ==}
+    engines: {node: '>=22'}
+
+  '@atproto-labs/identity-resolver@0.0.0-spaces-alpha-20260910230440':
+    resolution: {integrity: sha512-P8AIiy0xD/iNN+SACiiXf43nJAKt3NpJy4APxQ27uG1E/XcihP86O+1BuOkvvrMvrQVa6si1ekJ9Hyz5H+dpKQ==}
     engines: {node: '>=22'}
 
   '@atproto-labs/opentelemetry-node@0.0.0-spaces-alpha-20260915165437':
@@ -170,6 +180,10 @@ packages:
     resolution: {integrity: sha512-gzDoA0JTwnc0ZJOBLM7WX9xFxtynRS2K1Bofb8epzoMWDQvyvfbPcfkdPrKFM7NXCFUVpGpBnsCB8KFPTf1rCg==}
     engines: {node: '>=22'}
 
+  '@atproto/jwk-webcrypto@0.3.4':
+    resolution: {integrity: sha512-UsFIUozqnRecXPo6HgKV4PW4FqYHxX1V3iAe0rRV6Q2RSfYD8V2mZ89pv8NpvJynnaqJArBQ7HZlcg0F4tRYhA==}
+    engines: {node: '>=22'}
+
   '@atproto/jwk@0.7.4':
     resolution: {integrity: sha512-tq7TUDmNfe1yDfpRgdGQMJdl9TUlJmREQNCag9yg5w8Evu+TOiFiLgiOCbo7X4ouRPSgd1DpOzXbUa8UyKKMZA==}
     engines: {node: '>=22'}
@@ -217,6 +231,14 @@ packages:
 
   '@atproto/lexicon@0.0.0-spaces-alpha-20260910230440':
     resolution: {integrity: sha512-cXYyFWan57emHUSUObwjZk0Ax1hxM0UEB3Ddggc7jOKL6EuH3tYtqxC5L+/yhTAGyx99WjNSYLkWMnm6jh9Mrw==}
+    engines: {node: '>=22'}
+
+  '@atproto/oauth-client-node@0.0.0-spaces-alpha-20260910230440':
+    resolution: {integrity: sha512-Mh6V3dNBSp0UEn7IV+j4pW/JqxkiR/AKm4d63UyQ0t51xr92qmSlC4TZA+hR3cTA9l1k9fZIKlBSa2M2COU5+A==}
+    engines: {node: '>=22'}
+
+  '@atproto/oauth-client@0.0.0-spaces-alpha-20260910230440':
+    resolution: {integrity: sha512-lBZHDkYFEc/v6RWAJDBlfZyJpw9NlCZ+yLPj+faqGZcYV0snyFUmZu1qFpWLIfHkOrWRh6FyOopWWx3GbsznXQ==}
     engines: {node: '>=22'}
 
   '@atproto/oauth-provider-api@0.0.0-spaces-alpha-20260910230440':
@@ -1090,6 +1112,19 @@ packages:
   '@protobufjs/utf8@1.1.2':
     resolution: {integrity: sha512-b1UQwcEZ4yCnMCD8DAL1VlbvBJE9/IX4FTIp7BG1xYpf29SLazLSrqUkj4w7Y5y7cCVP6E5tcqqcI0xemPkHug==}
 
+  '@puppeteer/browsers@3.2.2':
+    resolution: {integrity: sha512-q2BU4YfO9h/Wt7IcWPcggpOOqLk2Tbs1hDwolvKZrweRjy751OJBKMN9zO5bfD0pzU7X/tvKw/exQds4pM/LOg==}
+    engines: {node: '>=22.12.0'}
+    hasBin: true
+    peerDependencies:
+      proxy-agent: '>=8.0.1'
+      yauzl: ^2.10.0 || ^3.4.0
+    peerDependenciesMeta:
+      proxy-agent:
+        optional: true
+      yauzl:
+        optional: true
+
   '@smithy/abort-controller@4.4.2':
     resolution: {integrity: sha512-IINJV4TQAvI1+upIy3YaDtlFcLsWQ5Uw6Nos7CNwiJtpRFw98L1XOn38467Pw54pcYuDi8HGnc2CNbkZBEZq6Q==}
     engines: {node: '>=18.0.0'}
@@ -1323,6 +1358,12 @@ packages:
   chownr@1.1.4:
     resolution: {integrity: sha512-jJ0bqzaylmJtVnNgzTeSOs8DPavpbYgEr/b0YL8/2GO3xJEhInFmhKMUnEJQjZumK7KXGFhUy89PrsJWlakBVg==}
 
+  chromium-bidi@17.0.2:
+    resolution: {integrity: sha512-5v9GQFhTktFvotn/OFNJBmKLKRAb6n9r0bVCwf7sHgWc3/JryK0bj1nn93L3pHFrfgcsu6Be6EWsDi+1XHTGDg==}
+    engines: {node: '>=20.19.0 <22.0.0 || >=22.12.0'}
+    peerDependencies:
+      devtools-protocol: '*'
+
   cjs-module-lexer@2.2.1:
     resolution: {integrity: sha512-Ca8swihM+/4yKecYHY52kgJd300hi2lADU/a1RxNTRe+RJ9jvqQlESpbz9DnG9mowez8qwXHB8qYdIUw9e+F5Q==}
 
@@ -1442,6 +1483,9 @@ packages:
   detect-libc@2.1.2:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
+
+  devtools-protocol@0.0.1680125:
+    resolution: {integrity: sha512-rVARKAvOFJCFkvgX01VLvYqKIvt+cRCqvUxIhB2oAqVGPalxk3w3sb5TUGDagpow/EFblBpm/Zl/29QA2dd+jA==}
 
   disposable-email-domains-js@1.25.0:
     resolution: {integrity: sha512-G16ih6YqeZV9CozhVW8IASgSAhGaJ2Tr58RRtZ8Ff5glhTCEav2VX74ciETHZ01n9D57aQasEvDzaBmzATYdYw==}
@@ -1833,8 +1877,15 @@ packages:
     resolution: {integrity: sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A==}
     engines: {node: '>=16 || 14 >=14.17'}
 
+  mitt@3.0.1:
+    resolution: {integrity: sha512-vKivATfr97l2/QBCYAkXYDbrIWPM2IIKEl7YPhjCvKlG3kE2gm+uBo6nEXK3M5/Ffh/FLpKExzOQ3JJoJGFKBw==}
+
   mkdirp-classic@0.5.3:
     resolution: {integrity: sha512-gKLcREMhtuZRwRAfqP3RFW+TK4JqApVBtOIftVgjuABpAtpxhPGaDcfvbhNvD0B8iD1oUr/txX35NjcaY6Ns/A==}
+
+  modern-tar@0.8.5:
+    resolution: {integrity: sha512-snEhs+6G5Tjd4I7tLCDOaoln2RgE0bD19RzEKgvgK2hZ5VKy3MpLhLTZ2fWpXSTg4K2cyPwp+VHATFJhxfnOeA==}
+    engines: {node: '>=18.0.0'}
 
   module-details-from-path@1.0.4:
     resolution: {integrity: sha512-EGWKgxALGMgzvxYF1UyGTy0HXX/2vHLkw6+NvDKW2jypWbHpjQuj4UMcqQWXHERJhVGKikolT06G3bcKe4fi7w==}
@@ -2070,6 +2121,10 @@ packages:
 
   pump@3.0.4:
     resolution: {integrity: sha512-VS7sjc6KR7e1ukRFhQSY5LM2uBWAUPiOPa/A3mkKmiMwSmRFUITt0xuj+/lesgnCv+dPIEYlkzrcyXgquIHMcA==}
+
+  puppeteer-core@25.11.0:
+    resolution: {integrity: sha512-Ujym7JbxoAqanaxGcHgmTomfhC01HfDCSuGZ8Hs9boHrDjzbNVMnFRJo2KtbDT9LCRgeJoFnkn9JQZ41eEUrLw==}
+    engines: {node: '>=22.12.0'}
 
   qs@6.16.0:
     resolution: {integrity: sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==}
@@ -2308,6 +2363,9 @@ packages:
     resolution: {integrity: sha512-TkRKr9sUTxEH8MdfuCSP7VizJyzRNMjj2J2do2Jr3Kym598JVdEksuzPQCnlFPW4ky9Q+iA+ma9BGm06XQBy8g==}
     engines: {node: '>= 0.6'}
 
+  typed-query-selector@2.12.2:
+    resolution: {integrity: sha512-EOPFbyIub4ngnEdqi2yOcNeDLaX/0jcE1JoAXQDDMIthap7FoN795lc/SHfIq2d416VufXpM8z/lD+WRm2gfOQ==}
+
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
@@ -2367,6 +2425,9 @@ packages:
   web-streams-polyfill@3.3.3:
     resolution: {integrity: sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw==}
     engines: {node: '>= 8'}
+
+  webdriver-bidi-protocol@0.4.3:
+    resolution: {integrity: sha512-uuN0goWfxP22B7J/uAgBpOYNPttC+XVseYE+rSY5+rQ+YBeVz/VORw8WbmLVcqW78zNg5A4qnjNXYUWR3il2ig==}
 
   which@2.0.2:
     resolution: {integrity: sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==}
@@ -2472,6 +2533,11 @@ snapshots:
       '@atproto/did': 0.0.0-spaces-alpha-20260910230440
       zod: 3.25.76
 
+  '@atproto-labs/identity-resolver@0.0.0-spaces-alpha-20260910230440':
+    dependencies:
+      '@atproto-labs/did-resolver': 0.0.0-spaces-alpha-20260910230440
+      '@atproto-labs/handle-resolver': 0.0.0-spaces-alpha-20260910230440
+
   '@atproto-labs/opentelemetry-node@0.0.0-spaces-alpha-20260915165437':
     dependencies:
       '@opentelemetry/api': 1.9.1
@@ -2569,6 +2635,12 @@ snapshots:
       '@atproto/jwk': 0.7.4
       jose: 5.10.0
 
+  '@atproto/jwk-webcrypto@0.3.4':
+    dependencies:
+      '@atproto/jwk': 0.7.4
+      '@atproto/jwk-jose': 0.2.4
+      zod: 3.25.76
+
   '@atproto/jwk@0.7.4':
     dependencies:
       multiformats: 13.4.2
@@ -2657,6 +2729,34 @@ snapshots:
     dependencies:
       '@atproto/common-web': 0.0.0-spaces-alpha-20260910230440
       '@atproto/syntax': 0.0.0-spaces-alpha-20260910230440
+      multiformats: 13.4.2
+      zod: 3.25.76
+
+  '@atproto/oauth-client-node@0.0.0-spaces-alpha-20260910230440':
+    dependencies:
+      '@atproto-labs/did-resolver': 0.0.0-spaces-alpha-20260910230440
+      '@atproto-labs/handle-resolver-node': 0.0.0-spaces-alpha-20260910230440
+      '@atproto-labs/simple-store': 0.5.1
+      '@atproto/did': 0.0.0-spaces-alpha-20260910230440
+      '@atproto/jwk': 0.7.4
+      '@atproto/jwk-jose': 0.2.4
+      '@atproto/jwk-webcrypto': 0.3.4
+      '@atproto/oauth-client': 0.0.0-spaces-alpha-20260910230440
+      '@atproto/oauth-types': 0.0.0-spaces-alpha-20260910230440
+
+  '@atproto/oauth-client@0.0.0-spaces-alpha-20260910230440':
+    dependencies:
+      '@atproto-labs/did-resolver': 0.0.0-spaces-alpha-20260910230440
+      '@atproto-labs/fetch': 0.3.6
+      '@atproto-labs/handle-resolver': 0.0.0-spaces-alpha-20260910230440
+      '@atproto-labs/identity-resolver': 0.0.0-spaces-alpha-20260910230440
+      '@atproto-labs/simple-store': 0.5.1
+      '@atproto-labs/simple-store-memory': 0.2.6
+      '@atproto/did': 0.0.0-spaces-alpha-20260910230440
+      '@atproto/jwk': 0.7.4
+      '@atproto/oauth-types': 0.0.0-spaces-alpha-20260910230440
+      '@atproto/xrpc': 0.0.0-spaces-alpha-20260910230440
+      core-js: 3.50.0
       multiformats: 13.4.2
       zod: 3.25.76
 
@@ -3945,6 +4045,11 @@ snapshots:
 
   '@protobufjs/utf8@1.1.2': {}
 
+  '@puppeteer/browsers@3.2.2':
+    dependencies:
+      modern-tar: 0.8.5
+      yargs: 18.1.0
+
   '@smithy/abort-controller@4.4.2':
     dependencies:
       '@smithy/types': 4.18.0
@@ -4225,6 +4330,12 @@ snapshots:
 
   chownr@1.1.4: {}
 
+  chromium-bidi@17.0.2(devtools-protocol@0.0.1680125):
+    dependencies:
+      devtools-protocol: 0.0.1680125
+      mitt: 3.0.1
+      zod: 3.25.76
+
   cjs-module-lexer@2.2.1: {}
 
   cliui@8.0.1:
@@ -4322,6 +4433,8 @@ snapshots:
   destroy@1.2.0: {}
 
   detect-libc@2.1.2: {}
+
+  devtools-protocol@0.0.1680125: {}
 
   disposable-email-domains-js@1.25.0: {}
 
@@ -4758,7 +4871,11 @@ snapshots:
 
   minipass@7.1.3: {}
 
+  mitt@3.0.1: {}
+
   mkdirp-classic@0.5.3: {}
+
+  modern-tar@0.8.5: {}
 
   module-details-from-path@1.0.4: {}
 
@@ -5004,6 +5121,20 @@ snapshots:
     dependencies:
       end-of-stream: 1.4.5
       once: 1.4.0
+
+  puppeteer-core@25.11.0:
+    dependencies:
+      '@puppeteer/browsers': 3.2.2
+      chromium-bidi: 17.0.2(devtools-protocol@0.0.1680125)
+      devtools-protocol: 0.0.1680125
+      typed-query-selector: 2.12.2
+      webdriver-bidi-protocol: 0.4.3
+      ws: 8.21.3
+    transitivePeerDependencies:
+      - bufferutil
+      - proxy-agent
+      - utf-8-validate
+      - yauzl
 
   qs@6.16.0:
     dependencies:
@@ -5280,6 +5411,8 @@ snapshots:
       media-typer: 0.3.0
       mime-types: 2.1.35
 
+  typed-query-selector@2.12.2: {}
+
   typescript@5.9.3: {}
 
   uglify-js@3.19.3:
@@ -5316,6 +5449,8 @@ snapshots:
   vary@1.1.2: {}
 
   web-streams-polyfill@3.3.3: {}
+
+  webdriver-bidi-protocol@0.4.3: {}
 
   which@2.0.2:
     dependencies:

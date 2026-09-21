@@ -188,9 +188,10 @@ rpc:com.atproto.repo.applyWrites?aud=did:web:pds.example#atproto_pds
 com.atproto.repo.delegatedWrites
   "Write to accounts that have made you a delegate"
   rpc: com.atproto.repo.{createRecord,putRecord,deleteRecord,applyWrites,uploadBlob}
-       com.atproto.space.{createRecord,putRecord,deleteRecord,applyWrites,getDelegationToken}
-       inheritAud
+       aud=*
 ```
+
+Two constraints of permission sets as they stand shape this. An `include:` scope may carry an `aud`, but only a specific service, never `*`; so a set meant for general-purpose clients has to carry `aud=*` itself, and an app that only ever acts for one host asks for the raw `rpc:` permission with that host as `aud` instead. And a set may only include methods under its own NSID authority, so the `com.atproto.space.*` write methods need a sibling set, `com.atproto.space.delegatedWrites`, of the same shape.
 
 **Make the call.** For each write the app mints a service auth token from the user's session (`getServiceAuth` with the account's PDS as `aud` and the method as `lxm`) and sends the write to the account's PDS with `repo` set to the account. The app finds the account's PDS the way it finds anything about a DID, by resolving its document. An SDK can hide all of this behind something like `agent.asDelegateOf(did)`.
 
