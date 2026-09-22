@@ -193,28 +193,20 @@ blob:image/*</div>
 </section>
 
 <section class="slide">
-  <h2>Proved in the prototype</h2>
+  <h2>What's real, what's open</h2>
   <div class="cols">
-    <div class="card ok"><h3>Against unmodified published packages</h3>
+    <div class="card ok"><h3>Real</h3>
+      <p>Everything on these slides runs today against unmodified published atproto packages: a stock alpha PDS with the delegate routes mounted in front, and a stock OAuth provider driven through its public hooks. The patches are a scope attribute, a consent card, and one sign-in link.</p>
+      <p>Checked end to end without a browser (10 steps) and through the real consent screens headlessly (14 steps), with a screenshot of every screen a person sees.</p>
+    </div>
+    <div class="card"><h3>Open</h3>
       <ul>
-        <li>A stock alpha PDS with the delegate routes mounted in front; nothing patched but a scope attribute, a consent card, and one sign-in link.</li>
-        <li>Delegated writes across two PDSes: bounded by the PDS's own scope matcher, all-or-nothing batches, single-use method-bound tokens, both policies, a managing app over real HTTP.</li>
-        <li>Sign-in as through the stock OAuth flow and consent screen; scope narrowed at issue and at every read; <code>act</code> on the token and in <code>getSession</code>; the consent-time device account removed; revocation on the next request.</li>
-        <li>Creation from another PDS with nothing but the founder's session; no usable credentials; controller management both ways; a non-controller refused.</li>
-      </ul></div>
-    <div class="card"><h3>Checked automatically</h3>
-      <ul>
-        <li><code>pnpm demo</code>: 10 steps, ~50 checks, no browser.</li>
-        <li><code>pnpm demo:walk</code>: 14 steps through the real consent screens, headless.</li>
-        <li>16 screenshots of every screen a person sees.</li>
+        <li><b>Discovery.</b> Which accounts name me, without every PDS notifying every other.</li>
+        <li><b>Calling out as the account.</b> An audience-specific <code>rpc:</code> in a delegate entry, if a session ever needs to call one named host as the account.</li>
+        <li><b>Consent records.</b> Keeping a delegate's consent to a client apart from the account's own.</li>
+        <li><b>Operator policy on creation.</b> Who may create accounts this way, and how many.</li>
       </ul>
-      <h3>Open</h3>
-      <ul>
-        <li>Discovery: which accounts name me, without fan-out.</li>
-        <li>An audience-specific <code>rpc:</code> in a delegate entry, if a session ever needs to call one named host as the account.</li>
-        <li>Recording a delegate's consent apart from the account's.</li>
-        <li>Operator policy on creation: who may create accounts this way, and how many.</li>
-      </ul></div>
+    </div>
   </div>
   <div class="num">11</div>
 </section>
