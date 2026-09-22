@@ -12,8 +12,7 @@
     "typecheck": "tsc --noEmit",
     "postinstall": "node scripts/patch-car-varint.mjs && node scripts/patch-account-delegates.mjs",
     "demo:app": "node --import tsx src/demo-app.ts",
-    "demo:walk": "node scripts/walk.mjs",
-    "pdf": "node scripts/pdf.mjs"
+    "demo:walk": "node scripts/walk.mjs"
   },
   "dependencies": {
     "@atproto/crypto": "0.0.0-spaces-alpha-20260910230440",
