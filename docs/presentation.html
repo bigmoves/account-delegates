@@ -166,6 +166,17 @@ blob:image/*</div>
 </section>
 
 <section class="slide">
+  <h2>The host route: the same design, with no PDS change</h2>
+  <svg class="seq" id="seq-host" style="max-height:54vh"></svg>
+  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the host does</span></div>
+  <div class="cols" style="margin-top:.8rem">
+    <div class="card ok"><h3>What you keep</h3>No change to the reference PDS, no protocol work, deployable today by whoever runs the host. Existing OAuth clients work. Consent is per account, on the host. Tranquil is already this for its own accounts.</div>
+    <div class="card no"><h3>What you give up</h3>The community must live on a group host. Roles, the login method, the narrowing, and the log are the host's own, with no shared representation. In the creation flow the app holds a credential for the community. Migration moves the repo and DID, and leaves the moderators behind unless the next host is the same kind.</div>
+  </div>
+  <div class="num">9</div>
+</section>
+
+<section class="slide">
   <h2>Against the alternatives</h2>
   <table>
     <tr><th></th><th>shared password /<br>app passwords</th><th>sign in as, with<br>AS hooks (Tranquil)</th><th>group host</th><th class="hl">this design</th></tr>
@@ -178,7 +189,7 @@ blob:image/*</div>
     <tr><th>creation from an app</th><td>n/a</td><td>on the same PDS, by a local user</td><td>admin API; the app keeps a refresh token for the group</td><td class="hl">any PDS, by the founder's own service auth; the app keeps nothing</td></tr>
     <tr><th>what changes</th><td>nothing</td><td>the AS, per implementation</td><td>a new network service</td><td class="hl">the PDS: config, one auth path on writes, one login method, one claim. No OAuth protocol change.</td></tr>
   </table>
-  <div class="num">9</div>
+  <div class="num">10</div>
 </section>
 
 <section class="slide">
@@ -205,7 +216,7 @@ blob:image/*</div>
         <li>Operator policy on creation: who may create accounts this way, and how many.</li>
       </ul></div>
   </div>
-  <div class="num">10</div>
+  <div class="num">11</div>
 </section>
 
 <script>
@@ -331,6 +342,29 @@ seq("seq-create", {
     { kind: "self", at: "pds", text: "record controllers, delegates, policy" },
     { from: "pds", to: "app", kind: "return", text: "{ did: did:plc:riders, handle: riders.test }" },
     { kind: "note", at: "app", to: "pds", text: ["The app holds nothing for riders. alice writes as it from this app (path 1), opens its settings by signing in", "as it as a controller (path 2), and adds the next moderator. If the app disappears, riders is unaffected."] },
+  ],
+});
+
+seq("seq-host", {
+  participants: [
+    { id: "app", label: "app service", sub: "runs or partners with a host" },
+    { id: "host", label: "group host", sub: "PDS + authorization server + roles, in one", tone: "accent" },
+    { id: "client", label: "any OAuth client", sub: "a steward's" },
+    { id: "apds", label: "alice's PDS" },
+  ],
+  colW: 270,
+  steps: [
+    { from: "app", to: "host", text: ["create community (admin auth)", "handle · stewards: [alice] · the app's own OAuth scopes"] },
+    { kind: "self", at: "host", text: ["reserve the handle · PLC identity · account on the wrapped PDS", "spaces and roles · an OAuth session for the app"] },
+    { from: "host", to: "app", kind: "return", text: ["refresh token for the community", "the app now holds a credential for it"] },
+    { from: "app", to: "host", text: ["writes as the community with that session", "bounded by the app's scopes, not by any one steward's role"] },
+    { kind: "note", at: "host", to: "client", text: "a steward in some other client: two-sided OAuth, the same shape as sign-in as the account" },
+    { from: "client", to: "host", text: "OAuth authorize as the community" },
+    { from: "host", to: "apds", text: "authn-only login: atproto, no permissions asked" },
+    { from: "apds", to: "host", kind: "return", text: "alice authenticated" },
+    { kind: "self", at: "host", text: ["alice's role on this community permits the requested scope?", "issue the community's session; the host's own code, its own log"] },
+    { from: "host", to: "client", kind: "return", text: "session for the community" },
+    { kind: "note", at: "app", to: "apds", text: ["To move the community: standard migration carries the repo and the DID to any PDS.", "The roles, the login method, and the log stay behind unless the next host is a group host too."] },
   ],
 });
 
