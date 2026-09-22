@@ -2,40 +2,42 @@
 // front of a stock alpha PDS. Everything here is what proposal 0017 says the
 // PDS itself would do; it is an extension only so that the prototype runs
 // from published packages. Each handler names where it would live upstream.
+//
+// A delegate reaches a write method two ways, and both land here:
+//
+//   service auth   the delegate's own token, `repo` = the account (the RFC's
+//                  delegated write: one login, one session, per-call tokens)
+//   session        an OAuth token *for the account* that the account's PDS
+//                  issued to a delegate who signed in as it (sign-in-as); it
+//                  carries `act.sub`, and its scope is already narrowed
+//
+// Either way the write is bounded, committed as the account, and logged.
 import express, { type Request, type Response, type Router } from "express";
 import type { AppContext } from "@atproto/pds";
 import { repoPrepare } from "@atproto/pds";
 import { ScopeMissingError, ScopePermissions } from "@atproto/oauth-scopes";
-import { createServiceJwt, verifyJwt } from "@atproto/xrpc-server";
+import { verifyJwt } from "@atproto/xrpc-server";
 import { parseCid } from "@atproto/lex-data";
-import type { DelegateStore } from "./store.ts";
-
-const CHECK_DELEGATE = "com.atproto.server.checkDelegate";
-const DEFAULT_MANAGING_APP_TTL_MS = 5 * 60 * 1000;
+import type { DelegateResolver } from "./resolve.ts";
+import type { DelegateStore, Via } from "./store.ts";
+import { XrpcError, sendError, short } from "./xrpc-error.ts";
 
 type Opts = {
   ctx: AppContext;
   store: DelegateStore;
+  resolver: DelegateResolver;
   /** This PDS's service DID; the `aud` a delegate's token must name. */
   serviceDid: string;
   log: (line: string) => void;
 };
 
-class XrpcError extends Error {
-  constructor(
-    public status: number,
-    public error: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-/** The bearer token's payload, decoded but not verified, to decide who handles the request. */
+/** The token's payload, decoded but not verified, to decide who handles the request. */
 function peekJwt(req: Request): Record<string, any> | null {
   const h = req.headers.authorization;
-  if (typeof h !== "string" || !h.startsWith("Bearer ")) return null;
-  const parts = h.slice(7).split(".");
+  if (typeof h !== "string") return null;
+  const m = /^(Bearer|DPoP) (.+)$/.exec(h);
+  if (!m) return null;
+  const parts = m[2]!.split(".");
   if (parts.length !== 3) return null;
   try {
     return JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8"));
@@ -47,31 +49,35 @@ function peekJwt(req: Request): Record<string, any> | null {
 const isServiceAuthShaped = (p: Record<string, any> | null) =>
   !!p && typeof p.iss === "string" && typeof p.lxm === "string" && typeof p.sub !== "string";
 
-function sendError(res: Response, err: any) {
-  const status = err?.status ?? err?.statusCode ?? 500;
-  const error = err?.error ?? err?.customErrorName ?? err?.name ?? "InternalServerError";
-  res.status(status).json({ error, message: err?.message ?? String(err) });
-}
+const isDelegatedSessionShaped = (p: Record<string, any> | null) =>
+  !!p && typeof p.sub === "string" && typeof p.jti === "string" && typeof p.act?.sub === "string";
+
+/** Who is writing, on whose behalf, and within what. */
+type DelegateAuth = {
+  delegate: string;
+  /** Anything with the OAuth matcher's shape: a fresh ScopePermissions or the session's own. */
+  permissions: { assertRepo(m: { action: "create" | "update" | "delete"; collection: string }): void };
+  via: Via;
+};
 
 export function delegatesRouter(opts: Opts): Router {
-  const { ctx, store, serviceDid, log } = opts;
+  const { ctx, store, resolver, serviceDid, log } = opts;
   const router = express.Router();
   const json = express.json({ limit: "1mb" });
-  const managingAppCache = new Map<string, { permissions: string[]; expiresAt: number }>();
 
-  // --- The delegated write path -------------------------------------------
-  // Upstream: auth-verifier.ts gains a `delegatedWrite` verifier; the
-  // `did !== auth.credentials.did` check in each repo write handler becomes
-  // assertRepoAccess(), which is this function.
+  // --- Authenticating a delegate ---------------------------------------------
+  // Upstream: auth-verifier.ts gains a `delegatedWrite` verifier that accepts
+  // either a service auth token (below) or the existing OAuth output whose
+  // token is a delegated session.
 
   /** Verify the delegate's service auth token for this method. RFC § Authentication. */
-  async function authenticateDelegate(req: Request, lxm: string) {
+  async function authenticateServiceAuth(req: Request, lxm: string, account: string): Promise<DelegateAuth> {
     const peek = peekJwt(req)!;
     const aud: string = peek.aud;
     if (aud !== serviceDid && aud !== `${serviceDid}#atproto_pds`) {
       throw new XrpcError(401, "BadJwtAudience", `token audience ${aud} is not this PDS`);
     }
-    const jwt = req.headers.authorization!.slice(7);
+    const jwt = req.headers.authorization!.split(" ")[1]!;
     let payload;
     try {
       payload = await verifyJwt(jwt, aud, lxm, (iss, forceRefresh) =>
@@ -89,85 +95,51 @@ export function delegatesRouter(opts: Opts): Router {
     if (!store.consumeJti(payload.jti, payload.exp)) {
       throw new XrpcError(401, "ReplayedToken", "this token has already been used");
     }
-    return payload.iss.split("#")[0]!;
+    const delegate = payload.iss.split("#")[0]!;
+    if (delegate === account) {
+      throw new XrpcError(400, "InvalidRequest", "a delegated write names another account as repo");
+    }
+    const permissions = await resolver.resolve(account, delegate);
+    if (!permissions) {
+      throw new XrpcError(403, "NotDelegate", `${delegate} is not a delegate of ${account}`);
+    }
+    // The same matcher an OAuth session gets; a delegate entry reads like a granted scope.
+    return { delegate, permissions: new ScopePermissions(permissions), via: "service-auth" };
   }
 
-  /** The delegate's permissions for this account, or null. RFC § Delegates, § The managing-app policy. */
-  async function resolveDelegate(account: string, did: string): Promise<string[] | null> {
-    const cfg = store.getConfig(account);
-    if (cfg.policy === "delegate-list") {
-      const d = store.getDelegate(account, did);
-      if (!d) return null;
-      if (d.expiresAt && Date.parse(d.expiresAt) < Date.now()) return null;
-      return d.permissions;
-    }
-    const key = `${account}|${did}`;
-    const cached = managingAppCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) {
-      log(`  ${short(account)}: ${short(did)} is cached from the managing app (${cached.permissions.length} permissions)`);
-      return cached.permissions.length ? cached.permissions : null;
-    }
-    const managingApp = cfg.managingApp!;
-    const endpoint = await resolveServiceEndpoint(managingApp);
-    // Signed as the account, with the account's own repo signing key: the
-    // managing app verifies it against the account's DID document.
-    const keypair = await ctx.actorStore.keypair(account as any);
-    const token = await createServiceJwt({
-      iss: account,
-      aud: managingApp,
-      lxm: CHECK_DELEGATE,
-      keypair,
-    });
-    const url = new URL(`${endpoint}/xrpc/${CHECK_DELEGATE}`);
-    url.searchParams.set("account", account);
-    url.searchParams.set("did", did);
-    log(`  ${short(account)} → ${managingApp}: checkDelegate(${short(did)})`);
-    const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
-    if (!res.ok) {
-      throw new XrpcError(502, "ManagingAppUnavailable", `checkDelegate: ${res.status} ${await res.text()}`);
-    }
-    const body = (await res.json()) as { permissions: string[]; expiresAt?: string };
-    const expiresAt = body.expiresAt ? Date.parse(body.expiresAt) : Date.now() + DEFAULT_MANAGING_APP_TTL_MS;
-    managingAppCache.set(key, { permissions: body.permissions, expiresAt });
-    log(`  ← ${body.permissions.length ? body.permissions.join(" ") : "(not a delegate)"}`);
-    return body.permissions.length ? body.permissions : null;
+  /** The stock OAuth verification, then: is this token a delegated session for `account`? */
+  async function authenticateSession(req: Request, res: Response, account: string): Promise<DelegateAuth> {
+    const peek = peekJwt(req)!;
+    const verify = ctx.authVerifier.authorization({ authorize: () => {} } as any);
+    const out = await verify({ req, res, params: {} } as any);
+    if (!("credentials" in out)) throw new XrpcError(out.status, out.error ?? "AuthRequired", out.message ?? "authentication required");
+    const creds: any = out.credentials;
+    const s = store.getSession(peek.jti);
+    if (!s || s.account !== creds.did) throw new XrpcError(401, "InvalidToken", "not a delegated session");
+    if (creds.did !== account) throw new XrpcError(403, "RepoMismatch", "a delegated session writes only to its own account");
+    // The scope on `creds.permissions` was narrowed to the delegate's current
+    // permissions when the token was read back from the store.
+    return { delegate: s.delegate, permissions: creds.permissions, via: "session" };
   }
 
-  async function resolveServiceEndpoint(serviceRef: string): Promise<string> {
-    const [did, fragment] = serviceRef.split("#");
-    const doc = await ctx.idResolver.did.resolve(did!);
-    const svc = (doc?.service ?? []).find((s: any) => s.id === `#${fragment}` || s.id === serviceRef);
-    if (!svc || typeof svc.serviceEndpoint !== "string") {
-      throw new XrpcError(502, "ManagingAppUnresolvable", `no service ${serviceRef}`);
-    }
-    return svc.serviceEndpoint;
-  }
+  // --- The delegated write ----------------------------------------------------
+  // Upstream: the `did !== auth.credentials.did` check in each repo write
+  // handler becomes assertRepoAccess(), which is this function.
 
   type Op =
     | { action: "create"; collection: string; rkey?: string; value: unknown }
     | { action: "update"; collection: string; rkey: string; value: unknown }
     | { action: "delete"; collection: string; rkey: string };
 
-  /** Authenticate, authorize, and commit a batch of writes as `repo` for a delegate. */
-  async function delegatedWrite(req: Request, lxm: string, repo: string, ops: Op[], extra: { validate?: boolean; swapCommit?: string }) {
-    const delegate = await authenticateDelegate(req, lxm);
-    const account = await ctx.authVerifier.findAccount(repo as any, {
-      checkDeactivated: true,
-      checkTakedown: true,
-    });
+  async function delegatedWrite(req: Request, res: Response, lxm: string, repo: string, ops: Op[], extra: { validate?: boolean; swapCommit?: string }) {
+    const account = await ctx.authVerifier.findAccount(repo as any, { checkDeactivated: true, checkTakedown: true });
     const did = account.did;
-    if (did === delegate) {
-      throw new XrpcError(400, "InvalidRequest", "a delegated write names another account as repo");
-    }
-    const permissions = await resolveDelegate(did, delegate);
-    if (!permissions) {
-      throw new XrpcError(403, "NotDelegate", `${delegate} is not a delegate of ${did}`);
-    }
-    // The same matcher an OAuth session gets; a delegate entry reads like a granted scope.
-    const perms = new ScopePermissions(permissions);
+    const auth = isServiceAuthShaped(peekJwt(req))
+      ? await authenticateServiceAuth(req, lxm, did)
+      : await authenticateSession(req, res, did);
     for (const op of ops) {
       try {
-        perms.assertRepo({ action: op.action, collection: op.collection });
+        auth.permissions.assertRepo({ action: op.action, collection: op.collection });
       } catch (err) {
         if (err instanceof ScopeMissingError) {
           throw new XrpcError(403, "DelegateScopeMissing", `delegate lacks ${err.scope}`);
@@ -194,17 +166,18 @@ export function delegatesRouter(opts: Opts): Router {
     });
     await ctx.accountManager.updateRepoRoot(did, commit.cid, commit.rev);
     for (const w of writes) {
-      store.recordWrite({ account: did, delegate, lxm, uri: w.uri.toString(), cid: "cid" in w ? w.cid?.toString() : undefined });
+      store.recordWrite({ account: did, delegate: auth.delegate, lxm, uri: w.uri.toString(), cid: "cid" in w ? w.cid?.toString() : undefined, via: auth.via });
     }
-    log(`  ${short(did)} committed ${commit.rev} for delegate ${short(delegate)} (${ops.map((o) => `${o.action} ${o.collection}`).join(", ")})`);
+    log(`  ${short(did)} committed ${commit.rev} for delegate ${short(auth.delegate)} via ${auth.via} (${ops.map((o) => `${o.action} ${o.collection}`).join(", ")})`);
     return { commit, writes };
   }
 
   const delegatedOnly = (lxm: string, handler: (req: Request, res: Response) => Promise<void>) =>
     router.post(`/xrpc/${lxm}`, (req, res, next) => {
-      // Only service-auth-shaped tokens are ours; everything else is the stock
-      // PDS's, untouched (and its body unread, so it can parse it itself).
-      if (!isServiceAuthShaped(peekJwt(req))) return next();
+      // Service-auth tokens and delegated sessions are ours; everything else
+      // is the stock PDS's, untouched (and its body unread, so it can parse it).
+      const p = peekJwt(req);
+      if (!isServiceAuthShaped(p) && !isDelegatedSessionShaped(p)) return next();
       json(req, res, (err) => {
         if (err) return sendError(res, err);
         handler(req, res).catch((e) => sendError(res, e));
@@ -213,7 +186,7 @@ export function delegatesRouter(opts: Opts): Router {
 
   delegatedOnly("com.atproto.repo.createRecord", async (req, res) => {
     const { repo, collection, rkey, record, validate, swapCommit } = req.body;
-    const { commit, writes } = await delegatedWrite(req, "com.atproto.repo.createRecord", repo, [{ action: "create", collection, rkey, value: record }], { validate, swapCommit });
+    const { commit, writes } = await delegatedWrite(req, res, "com.atproto.repo.createRecord", repo, [{ action: "create", collection, rkey, value: record }], { validate, swapCommit });
     const w = writes[0] as any;
     res.json({ uri: w.uri.toString(), cid: w.cid.toString(), commit: { cid: commit.cid.toString(), rev: commit.rev }, validationStatus: w.validationStatus });
   });
@@ -224,14 +197,14 @@ export function delegatesRouter(opts: Opts): Router {
     const uri = `at://${account.did}/${collection}/${rkey}`;
     const existing = await ctx.actorStore.read(account.did, (s) => s.record.getRecord(uri as any, null));
     const op: Op = existing ? { action: "update", collection, rkey, value: record } : { action: "create", collection, rkey, value: record };
-    const { commit, writes } = await delegatedWrite(req, "com.atproto.repo.putRecord", repo, [op], { validate, swapCommit });
+    const { commit, writes } = await delegatedWrite(req, res, "com.atproto.repo.putRecord", repo, [op], { validate, swapCommit });
     const w = writes[0] as any;
     res.json({ uri: w.uri.toString(), cid: w.cid.toString(), commit: { cid: commit.cid.toString(), rev: commit.rev }, validationStatus: w.validationStatus });
   });
 
   delegatedOnly("com.atproto.repo.deleteRecord", async (req, res) => {
     const { repo, collection, rkey, swapCommit } = req.body;
-    const { commit } = await delegatedWrite(req, "com.atproto.repo.deleteRecord", repo, [{ action: "delete", collection, rkey }], { swapCommit });
+    const { commit } = await delegatedWrite(req, res, "com.atproto.repo.deleteRecord", repo, [{ action: "delete", collection, rkey }], { swapCommit });
     res.json({ commit: { cid: commit.cid.toString(), rev: commit.rev } });
   });
 
@@ -245,7 +218,7 @@ export function delegatesRouter(opts: Opts): Router {
       if (t.endsWith("#delete")) return { action: "delete", collection: w.collection, rkey: w.rkey };
       throw new XrpcError(400, "InvalidRequest", `unsupported write ${t}`);
     });
-    const { commit, writes } = await delegatedWrite(req, "com.atproto.repo.applyWrites", repo, ops, { validate, swapCommit });
+    const { commit, writes } = await delegatedWrite(req, res, "com.atproto.repo.applyWrites", repo, ops, { validate, swapCommit });
     res.json({
       commit: { cid: commit.cid.toString(), rev: commit.rev },
       results: writes.map((w: any) =>
@@ -256,12 +229,41 @@ export function delegatesRouter(opts: Opts): Router {
     });
   });
 
+  // --- A delegated session, seen by the client -------------------------------
+  // getSession is what every client calls after login. For a delegated
+  // session it says whose session it is and who is acting: `act` mirrors the
+  // token's claim. Upstream: one field in getSession's output.
+  router.get("/xrpc/com.atproto.server.getSession", (req, res, next) => {
+    const p = peekJwt(req);
+    if (!isDelegatedSessionShaped(p)) return next();
+    (async () => {
+      const verify = ctx.authVerifier.authorization({ authorize: () => {} } as any);
+      const out = await verify({ req, res, params: {} } as any);
+      if (!("credentials" in out)) throw new XrpcError(out.status, out.error ?? "AuthRequired", out.message ?? "authentication required");
+      const did = (out.credentials as any).did as string;
+      const s = store.getSession(p!.jti);
+      const account = await ctx.accountManager.getAccount(did as any, { includeDeactivated: true });
+      if (!account) throw new XrpcError(400, "InvalidRequest", "account not found");
+      res.json({
+        did,
+        handle: account.handle ?? "handle.invalid",
+        active: !account.deactivatedAt,
+        ...(account.deactivatedAt ? { status: "deactivated" } : {}),
+        ...(s ? { act: { sub: s.delegate } } : {}),
+      });
+    })().catch((e) => sendError(res, e));
+  });
+
   // --- Management, by the account itself ------------------------------------
   // Upstream: api/com/atproto/server/, next to createAppPassword.ts. RFC
   // § Managing delegates: an OAuth session holding `account:delegates`, or a
   // legacy full-access session. Never an app password, never a delegate.
 
   async function accountOf(req: Request, res: Response): Promise<string> {
+    const p = peekJwt(req);
+    if (isDelegatedSessionShaped(p)) {
+      throw new XrpcError(403, "DelegateForbidden", "a delegated session cannot manage delegates");
+    }
     const verify = ctx.authVerifier.authorization({
       scopes: ["com.atproto.access"] as any,
       authorize: (permissions: any) => {
@@ -297,7 +299,7 @@ export function delegatesRouter(opts: Opts): Router {
     if (policy !== "delegate-list" && policy !== "managing-app") throw new XrpcError(400, "InvalidRequest", "policy must be delegate-list or managing-app");
     if (policy === "managing-app" && typeof managingApp !== "string") throw new XrpcError(400, "InvalidRequest", "managing-app policy needs a managingApp");
     store.setConfig(account, { policy, managingApp });
-    managingAppCache.clear();
+    resolver.clearCache();
     log(`  ${short(account)}: policy = ${policy}${managingApp ? ` (${managingApp})` : ""}`);
     return store.getConfig(account);
   });
@@ -326,7 +328,11 @@ export function delegatesRouter(opts: Opts): Router {
     writes: store.listWrites(account, Number(req.query.limit ?? 50)),
   }));
 
+  managed("get", "com.atproto.server.listDelegatedSessions", async (account) => ({
+    sessions: store.listSessions(account),
+  }));
+
   return router;
 }
 
-export const short = (did: string) => (did.length > 28 ? `${did.slice(0, 16)}…${did.slice(-6)}` : did);
+export { short };

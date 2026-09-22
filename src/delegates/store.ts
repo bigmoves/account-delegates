@@ -1,6 +1,11 @@
 // The account's delegate configuration, as the RFC describes it: host state
 // on the account's PDS, next to app passwords and preferences. SQLite via
 // node:sqlite so a clone needs no native build.
+//
+// Besides the configuration and the write log, this holds the small amount
+// of state a delegated *session* needs: which authorization request a
+// delegate signed in for, which device account was created for it, and
+// which tokens came out of it.
 import { DatabaseSync } from "node:sqlite";
 
 export type Policy = "delegate-list" | "managing-app";
@@ -18,6 +23,9 @@ export type Delegate = {
   createdAt: string;
 };
 
+/** How a delegated write reached the PDS. */
+export type Via = "service-auth" | "session";
+
 export type DelegatedWrite = {
   id: number;
   account: string;
@@ -25,8 +33,11 @@ export type DelegatedWrite = {
   lxm: string;
   uri: string;
   cid?: string;
+  via: Via;
   at: string;
 };
+
+type Binding = { account: string; delegate: string };
 
 export class DelegateStore {
   private db: DatabaseSync;
@@ -55,11 +66,41 @@ export class DelegateStore {
         lxm text not null,
         uri text not null,
         cid text,
+        via text not null default 'service-auth',
         at text not null
       );
       create table if not exists used_jti (
         jti text primary key,
         exp integer not null
+      );
+      -- Sign-in as the account. Each row binds one step of the OAuth flow to
+      -- the delegate who authenticated for it.
+      create table if not exists delegated_request (
+        request_id text primary key,
+        account text not null,
+        delegate text not null,
+        device_id text not null,
+        at text not null
+      );
+      create table if not exists delegated_device (
+        device_id text not null,
+        account text not null,
+        delegate text not null,
+        at text not null,
+        primary key (device_id, account)
+      );
+      create table if not exists delegated_authorization (
+        code_challenge text primary key,
+        account text not null,
+        delegate text not null,
+        at text not null
+      );
+      create table if not exists delegated_session (
+        jti text primary key,
+        account text not null,
+        delegate text not null,
+        client_id text,
+        at text not null
       );
     `);
   }
@@ -118,9 +159,9 @@ export class DelegateStore {
   recordWrite(w: Omit<DelegatedWrite, "id" | "at">) {
     this.db
       .prepare(
-        "insert into delegated_write (account, delegate, lxm, uri, cid, at) values (?, ?, ?, ?, ?, ?)",
+        "insert into delegated_write (account, delegate, lxm, uri, cid, via, at) values (?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(w.account, w.delegate, w.lxm, w.uri, w.cid ?? null, new Date().toISOString());
+      .run(w.account, w.delegate, w.lxm, w.uri, w.cid ?? null, w.via, new Date().toISOString());
   }
 
   listWrites(account: string, limit = 50): DelegatedWrite[] {
@@ -139,6 +180,73 @@ export class DelegateStore {
     } catch {
       return false;
     }
+  }
+
+  // --- Sign-in as the account -------------------------------------------------
+
+  /** A delegate authenticated for this authorization request, on this device. */
+  putRequest(requestId: string, b: Binding & { deviceId: string }) {
+    this.db.prepare("delete from delegated_request where at < ?").run(new Date(Date.now() - 15 * 60 * 1000).toISOString());
+    this.db
+      .prepare("insert or replace into delegated_request (request_id, account, delegate, device_id, at) values (?, ?, ?, ?, ?)")
+      .run(requestId, b.account, b.delegate, b.deviceId, new Date().toISOString());
+  }
+
+  getRequest(requestId: string): (Binding & { deviceId: string }) | undefined {
+    const row = this.db.prepare("select account, delegate, device_id from delegated_request where request_id = ?").get(requestId) as any;
+    return row ? { account: row.account, delegate: row.delegate, deviceId: row.device_id } : undefined;
+  }
+
+  deleteRequest(requestId: string) {
+    this.db.prepare("delete from delegated_request where request_id = ?").run(requestId);
+  }
+
+  /** The device account for `account` on this device was created by a delegate sign-in, not by the account's own credentials. */
+  putDevice(deviceId: string, b: Binding) {
+    this.db
+      .prepare("insert or replace into delegated_device (device_id, account, delegate, at) values (?, ?, ?, ?)")
+      .run(deviceId, b.account, b.delegate, new Date().toISOString());
+  }
+
+  getDevice(deviceId: string, account: string): Binding | undefined {
+    const row = this.db.prepare("select account, delegate from delegated_device where device_id = ? and account = ?").get(deviceId, account) as any;
+    return row ?? undefined;
+  }
+
+  deleteDevice(deviceId: string, account: string) {
+    this.db.prepare("delete from delegated_device where device_id = ? and account = ?").run(deviceId, account);
+  }
+
+  /** The authorization (identified by its PKCE challenge, which every token minted from it carries) belongs to a delegate. */
+  putAuthorization(codeChallenge: string, b: Binding) {
+    this.db.prepare("delete from delegated_authorization where at < ?").run(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+    this.db
+      .prepare("insert or replace into delegated_authorization (code_challenge, account, delegate, at) values (?, ?, ?, ?)")
+      .run(codeChallenge, b.account, b.delegate, new Date().toISOString());
+  }
+
+  getAuthorization(codeChallenge: string): Binding | undefined {
+    const row = this.db.prepare("select account, delegate from delegated_authorization where code_challenge = ?").get(codeChallenge) as any;
+    return row ?? undefined;
+  }
+
+  /** A token (by jti) is a delegated session: issued for `account`, exercised by `delegate`. */
+  putSession(jti: string, b: Binding & { clientId?: string }) {
+    this.db
+      .prepare("insert or replace into delegated_session (jti, account, delegate, client_id, at) values (?, ?, ?, ?, ?)")
+      .run(jti, b.account, b.delegate, b.clientId ?? null, new Date().toISOString());
+  }
+
+  getSession(jti: string): (Binding & { clientId?: string }) | undefined {
+    const row = this.db.prepare("select account, delegate, client_id from delegated_session where jti = ?").get(jti) as any;
+    return row ? { account: row.account, delegate: row.delegate, clientId: row.client_id ?? undefined } : undefined;
+  }
+
+  listSessions(account: string): { jti: string; delegate: string; clientId?: string; at: string }[] {
+    return (this.db.prepare("select jti, delegate, client_id as clientId, at from delegated_session where account = ? order by at desc").all(account) as any[]).map((r) => ({
+      ...r,
+      clientId: r.clientId ?? undefined,
+    }));
   }
 }
 

@@ -50,7 +50,10 @@ const plcUrl = `http://localhost:${PORTS.plc}`;
 // pds-a first: it hosts the club, and the account that publishes the
 // permission set. pds-b (the people) is told to resolve lexicons from that
 // account, the way a PDS today resolves them from the NSID's DNS authority.
-const pdsA = await startPds({ name: "pds-a", port: PORTS.pdsA, plcUrl, dataDir: DATA, log });
+// pds-a also hosts the sign-in-as page: when a delegate types their handle
+// there, it asks the demo's PDSes about it (the way a real PDS would resolve
+// a handle through DNS and well-known HTTP).
+const pdsA = await startPds({ name: "pds-a", port: PORTS.pdsA, plcUrl, dataDir: DATA, log, handleResolvers: [`http://localhost:${PORTS.pdsB}`, `http://localhost:${PORTS.pdsA}`] });
 const lexicons = await createAccount(pdsA.url, "lexicons.test");
 const permissionSet = JSON.parse(readFileSync(join(ROOT, "lexicons", "com.atproto.repo.delegatedWrites.json"), "utf8"));
 await xrpc(pdsA.url, "com.atproto.repo.createRecord", {
@@ -78,7 +81,7 @@ const app = await startApp({
   network: [
     { name: "app", url: `http://127.0.0.1:${PORTS.app}` },
     { name: "PLC", url: plcUrl },
-    { name: "pds-a (the club, the permission set)", url: pdsA.url, did: pdsA.did },
+    { name: "pds-a (the club, the permission set, the sign-in-as page)", url: pdsA.url, did: pdsA.did },
     { name: "pds-b (the people)", url: pdsB.url, did: pdsB.did },
     { name: "managing app", url: host.url, did: host.serviceRef },
     { name: "club", url: `${pdsA.url}/account`, did: club.did },
