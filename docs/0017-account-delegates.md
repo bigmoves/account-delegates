@@ -418,6 +418,8 @@ A community host built this way is a managing app that answers `checkDelegate` f
 
 **Permission sets in delegate entries.** A managing app projecting "moderator" onto twenty permission strings would rather name one set. Sets today are scoped to their publisher's NSID authority, which is the wrong boundary here; whether to relax that for delegate entries, or to define a role-shaped set type, is open.
 
+**An audience-specific `rpc:` permission in a delegate entry.** A delegate is bounded to writes, and a delegated session drops every `rpc:` scope, so a client holding a session as the account cannot call any service as the account. A community host with its own API is the case that might want otherwise: a delegate entry could carry `rpc:…?aud=did:web:host.example#community`, naming one service, and the narrowing could keep the matching request. It is a bounded exception, not `rpc:*`, and it would bring `act` into the service auth tokens the session mints. Left out until a real client needs it; the person calling the host as themselves, with the host checking their role, covers the known cases.
+
 **Client restriction.** A delegate entry could name the apps (`client_id`) through which it may be exercised, enforced via a client attestation as spaces do with `appAccess`. Left out to keep the first version small.
 
 ## Open questions
