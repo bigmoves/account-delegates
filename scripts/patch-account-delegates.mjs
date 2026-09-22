@@ -21,7 +21,14 @@
 //    only used as an ETag, so it does not need updating, but the chunk is
 //    served as immutable: hard-refresh a browser that has seen it before.
 //
-// Neither edit changes behaviour for scopes that exist today.
+// 3. @atproto/oauth-provider-ui (the sign-in screen): one link under the
+//    password field, "Sign in as a delegate of this account", to the PDS's own
+//    sign-in-as page (src/delegates/sign-in-as.ts), carrying the identifier
+//    typed so far and the authorize URL to come back to. This is the hybrid's
+//    one visible change to the login flow: the person never types the
+//    account's password, they authenticate at their own PDS.
+//
+// None of these edits change behaviour for scopes or sign-ins that exist today.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -95,4 +102,37 @@ for (const dir of findPkg("@atproto+oauth-provider-ui@")) {
   src = src.slice(0, at) + wrapper + src.slice(at + head.length);
   writeFileSync(file, src);
   log(`${dir}: ${chunk}: attributes += delegates, and a Delegates card`);
+}
+
+// --- 3. the sign-in screen ------------------------------------------------------
+for (const dir of findPkg("@atproto+oauth-provider-ui@")) {
+  const dist = join(pnpmDir, dir, "node_modules", "@atproto", "oauth-provider-ui", "dist");
+  if (!existsSync(dist)) continue;
+  const chunk = readdirSync(dist).find((f) => /^sign-in-view-.*\.js$/.test(f));
+  if (!chunk) {
+    log(`${dir}: sign-in-view chunk not found; skipping`);
+    continue;
+  }
+  const file = join(dist, chunk);
+  let src = readFileSync(file, "utf8");
+  if (src.includes("Sign in as a delegate")) {
+    log(`${dir}: sign-in link already patched`);
+    continue;
+  }
+  // The sign-in form renders a note ("role: note") between the password
+  // field and the remember checkbox. Append the link right after it. `N` is
+  // the jsx runtime and `_` the form's ref, both in scope where the note is.
+  const re = /(\(0,N\.jsx\)\(c,\{role:`note`,title:\(0,N\.jsx\)\(n,\{id:`[^`]+`\}\),children:\(0,N\.jsx\)\(n,\{id:`[^`]+`\}\)\}\))/;
+  if (!re.test(src)) {
+    log(`${dir}: sign-in form note not found in ${chunk}; skipping`);
+    continue;
+  }
+  const link =
+    ",(0,N.jsx)(`a`,{href:`#`,className:`text-primary text-sm underline underline-offset-4`," +
+    "onClick:e=>{e.preventDefault();let u=_.current?.querySelector(`input[name=\"username\"]`)?.value??``;" +
+    "location.assign(`/oauth/delegate?`+new URLSearchParams({account:u,return_to:location.href}))}," +
+    "children:`Sign in as a delegate of this account`})";
+  src = src.replace(re, `$1${link}`);
+  writeFileSync(file, src);
+  log(`${dir}: ${chunk}: a "Sign in as a delegate" link on the sign-in form`);
 }

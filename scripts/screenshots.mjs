@@ -68,11 +68,65 @@ await shot("04-alice-acting-as");
 await page.goto(`${APP}/club`, { waitUntil: "load" });
 await shot("05-club-log");
 
-// alice again, with the raw scope: same grant, generic consent screen.
+// alice again, as an app for one host: the audience-specific permission, generic consent screen.
 await page.goto(`${APP}/alice`, { waitUntil: "load" });
 await Promise.all([page.waitForNavigation({ waitUntil: "load" }), page.click("form[action='/alice/sign-out'] button")]);
 await page.waitForSelector("form[action='/oauth/raw/start']");
 await signIn("/oauth/raw/start", "alice-pass", "06-consent-raw-scope");
+
+// --- Sign-in as the club, from a stock client ---------------------------------
+
+const hasButton = (re) => page.evaluate((src) => [...document.querySelectorAll("button")].some((b) => new RegExp(src, "i").test(b.innerText)), re.source);
+/** Wait for whichever of a password field, an account list, or the consent screen comes up. */
+const waitForPdsStep = () => page.waitForFunction(() =>
+  !!document.querySelector("input[type=password]") ||
+  [...document.querySelectorAll("button")].some((b) => /^authorize$/i.test(b.innerText) || /club\.test/.test(b.innerText)));
+
+// The stock client's sign-in page, then the club's PDS: the stock sign-in
+// screen, with the link this prototype adds.
+await page.goto(`${APP}/stock`, { waitUntil: "load" });
+await shot("07-stock-client");
+await Promise.all([page.waitForNavigation({ waitUntil: "load" }), page.click("form[action='/oauth/stock/start'] button:not([name])")]);
+await page.waitForSelector("input[type=password]");
+await settled();
+await shot("08-club-sign-in-screen-with-link");
+// Take the link: the PDS's own sign-in-as page.
+await Promise.all([page.waitForNavigation({ waitUntil: "load" }), page.click("a[href='#']")]);
+await page.waitForSelector("input[name=handle]");
+await shot("09-sign-in-as-page");
+await page.type("input[name=handle]", "alice.test");
+await Promise.all([page.waitForNavigation({ waitUntil: "load" }), page.click("form[action='/oauth/delegate'] button")]);
+// alice's own PDS: she may already be signed in there from earlier (then only consent is asked).
+await waitForPdsStep();
+if (await page.$("input[type=password]")) {
+  await page.type("input[type=password]", "alice-pass");
+  await clickText(/^sign in$/);
+}
+await page.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => /^authorize$/i.test(b.innerText)));
+await settled();
+await shot("10-consent-nested-atproto-only");
+await clickText(/^authorize$/);
+// Callback → finish → back at the club's authorize page, which now lists club.test.
+await page.waitForFunction(() => location.pathname === "/oauth/authorize" && [...document.querySelectorAll("button")].some((b) => /^authorize$/i.test(b.innerText) || /club\.test/.test(b.innerText)));
+await settled();
+if (!(await hasButton(/^authorize$/))) {
+  await shot("11-club-consent-lists-club-session");
+  await clickText(/club\.test/);
+  await page.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => /^authorize$/i.test(b.innerText)));
+  await settled();
+}
+await shot("12-consent-as-club");
+await clickText(/^authorize$/);
+await backAtApp();
+await page.waitForNetworkIdle({ idleTime: 300 }).catch(() => {});
+await page.waitForSelector("form[action='/stock/write']");
+await Promise.all([page.waitForNavigation({ waitUntil: "load" }), page.click("form[action='/stock/write'] button[value=accept]")]);
+await Promise.all([page.waitForNavigation({ waitUntil: "load" }), page.click("form[action='/stock/write'] button[value=post]")]);
+await shot("13-stock-acting-as-club");
+
+// The club sees both paths in its log, and the delegated session.
+await page.goto(`${APP}/club`, { waitUntil: "load" });
+await shot("14-club-log-and-sessions");
 
 await browser.close();
 console.log("done");

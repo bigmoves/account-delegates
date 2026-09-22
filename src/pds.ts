@@ -4,7 +4,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Secp256k1Keypair, randomStr } from "@atproto/crypto";
-import { PDS } from "@atproto/pds";
+import { PDS, envToCfg, envToSecrets } from "@atproto/pds";
 import express from "express";
 import * as ui8 from "uint8arrays";
 import { DelegateResolver } from "./delegates/resolve.ts";
@@ -38,15 +38,26 @@ export async function startPds(opts: {
    * demo's `.test` handles resolve nowhere else.
    */
   handleResolvers?: string[];
+  /**
+   * The hostname the PDS is reached at: `localhost` (default), `127.0.0.1`,
+   * or `[::1]`, the loopback names an http OAuth issuer may use. The browser
+   * demo gives each PDS a different one: browsers keep cookies per host, not
+   * per port, and two authorization servers on one host would overwrite each
+   * other's device cookies.
+   */
+  host?: string;
 }): Promise<RunningPds> {
   const { name, port, plcUrl, dataDir, log, lexiconDidAuthority } = opts;
+  const host = opts.host ?? "localhost";
   const dir = join(dataDir, name);
   mkdirSync(join(dir, "blobs"), { recursive: true });
   const rotation = await Secp256k1Keypair.create({ exportable: true });
-  const url = `http://localhost:${port}`;
-  // Distinct per instance: two PDSes on localhost would otherwise share did:web:localhost.
+  const url = `http://${host}:${port}`;
+  // Distinct per instance: two PDSes on localhost would otherwise share
+  // did:web:localhost. Always spelled with `localhost`: nothing in the demo
+  // resolves it, and did:web has no form for an IP.
   const did = `did:web:localhost%3A${port}`;
-  const pds = await PDS.fromEnv({
+  const env = {
     devMode: true,
     port,
     hostname: "localhost",
@@ -69,7 +80,14 @@ export async function startPds(opts: {
     bskyAppViewCdnUrlPattern: "http://cdn.invalid/%s/%s/%s",
     modServiceUrl: "https://moderator.invalid",
     modServiceDid: "did:example:invalid",
-  });
+  };
+  // The stock config only serves plain http for the hostname `localhost`;
+  // for another loopback name, set the public URL (and so the OAuth issuer) by hand.
+  const cfg: any = envToCfg(env);
+  cfg.service.hostname = host;
+  cfg.service.publicUrl = url;
+  cfg.oauth.issuer = url;
+  const pds = await PDS.create(cfg, envToSecrets(env));
   const store = new DelegateStore(join(dir, "delegates.sqlite"));
   const resolver = new DelegateResolver({ ctx: pds.ctx, store, log });
   const app = express();

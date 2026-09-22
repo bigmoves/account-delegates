@@ -30,6 +30,8 @@ export type AppOpts = {
   actFor: ActFor[];
   /** Managing apps the delegate page asks "which accounts name me". Host-scoped, by nature. */
   managingApps: { url: string; name: string; serviceRef: string }[];
+  /** The PDS the accounts this app acts for live on, as `did#atproto_pds`, for an audience-specific permission: what an app for one host asks for. */
+  delegateAud: string;
   /** Shown on the index page. */
   network: { name: string; url: string; did?: string }[];
   log: (line: string) => void;
@@ -44,14 +46,18 @@ const SCOPES = {
   /** The controller's tool. `account:delegates` is the permission the RFC adds. */
   club: "atproto account:delegates?action=manage",
   /**
-   * The delegate's app, the one-line consent: a permission set. The set itself
-   * carries `aud=*`; an `include:` may only name a specific service as `aud`,
-   * and a general-purpose client cannot know where the accounts its user is a
-   * delegate of are hosted.
+   * The delegate's app as a general-purpose client: the permission set, whose
+   * own text says the audience is open. The set carries `aud=*`; an `include:`
+   * may only name a specific service as `aud`, and a general-purpose client
+   * cannot know where the accounts its user is a delegate of are hosted.
    */
   set: "atproto include:com.atproto.repo.delegatedWrites",
-  /** The delegate's app, the raw form: what the consent screen renders with no permission set. */
-  raw: "atproto rpc:com.atproto.repo.createRecord?aud=*",
+  /**
+   * The delegate's app as a client for one host: the default the RFC now
+   * recommends. The permission names the PDS the accounts live on, so the
+   * consent is bounded to that server; the screen still renders it generically.
+   */
+  raw: (aud: string) => `atproto rpc:com.atproto.repo.createRecord?aud=${encodeURIComponent(aud)}`,
   /**
    * A stock client that has never heard of delegates. It signs in as whatever
    * account is typed in, asking for what an ordinary app asks for. When the
@@ -61,6 +67,10 @@ const SCOPES = {
   stock: "atproto repo:social.grain.group.item repo:app.bsky.feed.post?action=create blob:image/*",
 } as const;
 type Door = keyof typeof SCOPES;
+const scopeOf = (door: Door, aud: string): string => {
+  const s = SCOPES[door];
+  return typeof s === "function" ? s(aud) : s;
+};
 
 class MemStore<V> {
   private m = new Map<string, V>();
@@ -82,9 +92,9 @@ function localHandleResolver(pdses: string[]) {
   };
 }
 
-function loopbackClient(opts: { base: string; door: Door; plcUrl: string; handleResolvers: string[]; stateStore: MemStore<NodeSavedState>; sessionStore: MemStore<NodeSavedSession> }) {
+function loopbackClient(opts: { base: string; door: Door; scope: string; plcUrl: string; handleResolvers: string[]; stateStore: MemStore<NodeSavedState>; sessionStore: MemStore<NodeSavedSession> }) {
   const redirect = `${opts.base}/oauth/${opts.door}/callback`;
-  const scope = SCOPES[opts.door];
+  const scope = opts.scope;
   const client_id = `http://localhost?${new URLSearchParams({ redirect_uri: redirect, scope })}`;
   return new NodeOAuthClient({
     clientMetadata: {
@@ -139,7 +149,7 @@ export async function startApp(opts: AppOpts) {
   // Sessions are stored by DID, and two doors can hold a session for the same
   // DID (the club's own tool, and a stock client a delegate signed in to as
   // the club): one store per door.
-  const clientFor = (door: Door) => loopbackClient({ base, door, plcUrl, handleResolvers: opts.handleResolvers, stateStore, sessionStore: new MemStore<NodeSavedSession>() });
+  const clientFor = (door: Door) => loopbackClient({ base, door, scope: scopeOf(door, opts.delegateAud), plcUrl, handleResolvers: opts.handleResolvers, stateStore, sessionStore: new MemStore<NodeSavedSession>() });
   const clients: Record<Door, NodeOAuthClient> = { club: clientFor("club"), set: clientFor("set"), raw: clientFor("raw"), stock: clientFor("stock") };
   const idResolver = new IdResolver({ plcUrl });
   /** What alice's app has seen happen, newest first. */
@@ -202,7 +212,7 @@ export async function startApp(opts: AppOpts) {
 <ol>
 <li>Open <a href="/club">the club</a> and sign in. The consent screen is the PDS's own; it shows a <b>Delegates</b> card for the <code>account:delegates</code> permission.</li>
 <li>Make alice a delegate for <code>social.grain.group.item</code>.</li>
-<li><b>Delegated write.</b> Open <a href="/alice">alice</a> and sign in with the permission set. The consent screen reads <i>Write to accounts that have made you a delegate</i>. Sign out and try the raw scope to see the generic rendering.</li>
+<li><b>Delegated write.</b> Open <a href="/alice">alice</a> and sign in as an app for one host: the permission names the club's PDS. Sign out and sign in as a general-purpose app to see the open-audience consent, which says so in its title.</li>
 <li>Acting as the club, accept a gallery. It lands under the club's DID. Try posting as the club: refused, outside her bounds.</li>
 <li><b>Sign-in as.</b> Open <a href="/stock">the stock client</a>, type <code>club.test</code>, and choose <i>sign in as a delegate</i>. The club's PDS sends you to alice's PDS to authenticate (<code>atproto</code> only), brings you back, and the club's own consent screen lists <code>club.test</code> as signed in. Consent. The client's token is the club's, with <code>act.sub</code> = alice and the scope cut down to her permissions.</li>
 <li>Accept a gallery from the stock client: an ordinary <code>createRecord</code> as the club. Post: refused. The club's log names alice either way, and says which path.</li>
@@ -367,18 +377,18 @@ ${(sessions.json.sessions ?? []).length ? (sessions.json.sessions as any[]).map(
     const s = await sessionFor(req, "alice");
     if (!s) {
       return void res.send(page("alice", `
-<p>An app alice uses. It knows nothing about the club's host. She signs in <b>as herself</b>, once, at her own PDS. Two ways to ask for the same thing, so you can compare consent screens:</p>
-<form method="post" action="/oauth/set/start"><label>Account <input type="text" name="who" value="alice.test"></label>
-<button>Sign in with the permission set</button> <span class="muted"><code>${esc(SCOPES.set)}</code></span></form>
-<form method="post" action="/oauth/raw/start" style="margin-top:.5rem"><input type="hidden" name="who" value="alice.test">
-<button>Sign in with the raw scope</button> <span class="muted"><code>${esc(SCOPES.raw)}</code></span></form>
-<div class="note">With the permission set, the consent screen reads <i>Write to accounts that have made you a delegate</i>, from the set published as <code>com.atproto.repo.delegatedWrites</code>. With the raw scope it reads <i>Authenticate: perform actions on your behalf</i>, with a Call / Towards table behind the question mark. Same grant, different legibility. Nothing in the consent names the club: that authorization is the club's to give, on its own PDS.</div>`, flash));
+<p>An app alice uses. It knows nothing about the club's host. She signs in <b>as herself</b>, once, at her own PDS. Two kinds of app, two consents:</p>
+<form method="post" action="/oauth/raw/start"><label>Account <input type="text" name="who" value="alice.test"></label>
+<button>Sign in as an app for one host</button> <span class="muted"><code>${esc(scopeOf("raw", opts.delegateAud))}</code></span></form>
+<form method="post" action="/oauth/set/start" style="margin-top:.5rem"><input type="hidden" name="who" value="alice.test">
+<button>Sign in as a general-purpose app</button> <span class="muted"><code>${esc(SCOPES.set)}</code></span></form>
+<div class="note"><b>One host</b> is the default: the permission names the PDS the accounts live on, so what alice grants is bounded to that server. The stock consent screen renders it as <i>Authenticate: perform actions on your behalf</i>, with the server behind the question mark. <b>General-purpose</b> is the open audience: the app cannot know where the accounts its user is a delegate of are hosted, so it asks through the permission set <code>com.atproto.repo.delegatedWrites</code>, whose own title says so: <i>Write to any account that has made you a delegate, on any server</i>. Either way, nothing in this consent names the club: that authorization is the club's to give, on its own PDS, and the club's bounds apply regardless of what this app was granted.</div>`, flash));
     }
     const { session, door } = s;
     const info = await session.getTokenInfo().catch(() => null);
     const choices = await actingAsChoices(session.did);
     res.send(page("alice", `
-<p>Signed in as <code>${esc(session.did)}</code> (${door === "set" ? "permission set" : "raw scope"}), token scope <code>${esc(info?.scope ?? "?")}</code>. <form class="inline" method="post" action="/alice/sign-out"><button>Sign out</button></form></p>
+<p>Signed in as <code>${esc(session.did)}</code> (${door === "set" ? "general-purpose app, open audience" : "app for one host"}), token scope <code>${esc(info?.scope ?? "?")}</code>. <form class="inline" method="post" action="/alice/sign-out"><button>Sign out</button></form></p>
 
 <h2>Acting as</h2>
 <form method="post" action="/alice/write">
@@ -417,7 +427,8 @@ ${outcomes.length ? outcomes.map((o) => `<tr><td class="muted">${esc(o.at)}</td>
     const pdsUrl = (doc?.service ?? []).find((x: any) => x.id === "#atproto_pds")?.serviceEndpoint as string | undefined;
     if (!pdsUrl) { push(0, "could not resolve the account's PDS", false); return void res.redirect("/alice"); }
     const describe = await fetch(`${pdsUrl}/xrpc/com.atproto.server.describeServer`).then((r) => r.json() as Promise<{ did: string }>);
-    const aud = describe.did;
+    // The PDS as a service reference, the form an rpc: permission's audience takes.
+    const aud = `${describe.did}#atproto_pds`;
 
     // 2. Ask alice's own PDS for a token addressed to the club's PDS, bound to this method.
     //    This is the call the OAuth grant gates: no rpc: permission, no token.

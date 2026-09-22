@@ -168,7 +168,7 @@ check("alice is listed with her permission", html.includes(aliceDid) && /social\
 
 step("3. alice signs in to her app, with the permission set.");
 const alice = await signInAt("set", "alice.test");
-check("consent page resolved the permission set", alice.data.permissionSets?.["com.atproto.repo.delegatedWrites"]?.title === "Write to accounts that have made you a delegate", JSON.stringify(Object.keys(alice.data.permissionSets ?? {})));
+check("consent page resolved the permission set, whose title names the open audience", /on any server$/.test(alice.data.permissionSets?.["com.atproto.repo.delegatedWrites"]?.title ?? ""), alice.data.permissionSets?.["com.atproto.repo.delegatedWrites"]?.title);
 check("callback lands on /alice", alice.callbackTo === "/alice");
 html = await text("/alice");
 {
@@ -197,10 +197,15 @@ await post("/alice/write", { as: clubDid, what: "accept" });
 html = strip(await text("/alice"));
 check("alice's next write → 403 NotDelegate", /403 NotDelegate/.test(html.split("What happened")[1] ?? ""));
 
-step("6. The raw scope: same grant, generic consent screen.");
+step("6. An app for one host: the permission names the club's PDS, generic consent screen.");
 await post("/alice/sign-out", {});
 const raw = await signInAt("raw", "alice.test");
-check("consent page scope is the raw rpc permission, no permission set", raw.data.scope === "atproto rpc:com.atproto.repo.createRecord?aud=*" && Object.keys(raw.data.permissionSets ?? {}).length === 0, raw.data.scope);
+check("consent page scope is one rpc permission bound to the club's PDS, no permission set", /^atproto rpc:com\.atproto\.repo\.createRecord\?aud=did/.test(raw.data.scope) && !/aud=\*/.test(raw.data.scope) && Object.keys(raw.data.permissionSets ?? {}).length === 0, raw.data.scope);
+html = await text("/alice");
+check("signed in as an app for one host", /app for one host/.test(html));
+await post("/alice/write", { as: clubDid, what: "accept" });
+html = strip(await text("/alice"));
+check("a write to the club's PDS is covered by the audience-specific permission → 403 NotDelegate (she was removed), not a scope error at her own PDS", /403 NotDelegate/.test(html.split("What happened")[1] ?? ""), (html.split("What happened")[1] ?? "").slice(0, 120));
 
 step("7. The club's tool without the permission: a session that lacks account:delegates is refused.");
 // Sign the club in through alice's raw door (an rpc: permission, no account:delegates) and hit the management method.
@@ -241,7 +246,7 @@ check("her PDS is asked for atproto only", nestedLogin.data.scope === "atproto",
 check("by the club's PDS acting as a client, asking for nothing more", /^http:\/\/localhost\?/.test(nestedLogin.data.clientId ?? "") && /scope=atproto(&|$)/.test(nestedLogin.data.clientId ?? ""), nestedLogin.data.clientId);
 const cb = await go(nestedLogin.loc);
 const finishUrl = cb.headers.get("location") ?? "";
-check("the loopback callback hops back to the host holding the device cookie", /^http:\/\/localhost:\d+\/oauth\/delegate\/finish\?ticket=/.test(finishUrl), `${cb.status} ${finishUrl.slice(0, 60)}`);
+check("the loopback callback hops back to the host holding the device cookie", finishUrl.startsWith(`${pdsA}/oauth/delegate/finish?ticket=`), `${cb.status} ${finishUrl.slice(0, 60)}`);
 const fin = await go(finishUrl);
 check("finish returns to the club's authorize page", fin.headers.get("location") === returnTo, `${fin.status} ${fin.headers.get("location")?.slice(0, 60)}`);
 const chosen = await chooseSession(returnTo, clubDid);

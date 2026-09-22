@@ -4,8 +4,8 @@
   "defs": {
     "main": {
       "type": "permission-set",
-      "title": "Write to accounts that have made you a delegate",
-      "detail": "Sign writes to another account's repository as yourself. That account's own PDS decides whether to accept them.",
+      "title": "Write to any account that has made you a delegate, on any server",
+      "detail": "Sign writes as yourself to other accounts' repositories, wherever they are hosted. Each account's own server decides whether you are its delegate and what you may write as it; this app cannot exceed that. Apps that act for accounts on one known server should ask for that server alone instead of this set.",
       "permissions": [
         {
           "type": "permission",

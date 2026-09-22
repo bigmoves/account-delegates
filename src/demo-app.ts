@@ -50,10 +50,14 @@ const plcUrl = `http://localhost:${PORTS.plc}`;
 // pds-a first: it hosts the club, and the account that publishes the
 // permission set. pds-b (the people) is told to resolve lexicons from that
 // account, the way a PDS today resolves them from the NSID's DNS authority.
-// pds-a also hosts the sign-in-as page: when a delegate types their handle
-// there, it asks the demo's PDSes about it (the way a real PDS would resolve
-// a handle through DNS and well-known HTTP).
-const pdsA = await startPds({ name: "pds-a", port: PORTS.pdsA, plcUrl, dataDir: DATA, log, handleResolvers: [`http://localhost:${PORTS.pdsB}`, `http://localhost:${PORTS.pdsA}`] });
+// Each PDS gets its own hostname: browsers keep cookies per host, not per
+// port, and both PDSes are authorization servers a browser signs in to
+// during one flow. (An http issuer must be a loopback name, so not
+// `*.localhost`.) pds-a also hosts the sign-in-as page: when a delegate types
+// their handle there, it asks the demo's PDSes about it, the way a real PDS
+// would resolve a handle through DNS and well-known HTTP.
+const HOSTS = { pdsA: "localhost", pdsB: "127.0.0.1" };
+const pdsA = await startPds({ name: "pds-a", host: HOSTS.pdsA, port: PORTS.pdsA, plcUrl, dataDir: DATA, log, handleResolvers: [`http://${HOSTS.pdsB}:${PORTS.pdsB}`, `http://${HOSTS.pdsA}:${PORTS.pdsA}`] });
 const lexicons = await createAccount(pdsA.url, "lexicons.test");
 const permissionSet = JSON.parse(readFileSync(join(ROOT, "lexicons", "com.atproto.repo.delegatedWrites.json"), "utf8"));
 await xrpc(pdsA.url, "com.atproto.repo.createRecord", {
@@ -61,7 +65,7 @@ await xrpc(pdsA.url, "com.atproto.repo.createRecord", {
   body: { repo: lexicons.did, collection: "com.atproto.lexicon.schema", rkey: permissionSet.id, validate: false, record: { $type: "com.atproto.lexicon.schema", ...permissionSet } },
 });
 const [pdsB, host] = await Promise.all([
-  startPds({ name: "pds-b", port: PORTS.pdsB, plcUrl, dataDir: DATA, log, lexiconDidAuthority: lexicons.did }),
+  startPds({ name: "pds-b", host: HOSTS.pdsB, port: PORTS.pdsB, plcUrl, dataDir: DATA, log, lexiconDidAuthority: lexicons.did }),
   startManagingApp({ port: PORTS.host, plcUrl, ttlMs: Number(process.env.CHECK_DELEGATE_TTL_MS ?? 15_000), log }),
 ]);
 
@@ -78,6 +82,7 @@ const app = await startApp({
   handleResolvers: [pdsB.url, pdsA.url],
   actFor: [{ did: club.did, handle: club.handle, label: "Peninsula Riders" }],
   managingApps: [{ url: host.url, name: "the community host", serviceRef: host.serviceRef }],
+  delegateAud: `${pdsA.did}#atproto_pds`,
   network: [
     { name: "app", url: `http://127.0.0.1:${PORTS.app}` },
     { name: "PLC", url: plcUrl },
