@@ -177,9 +177,9 @@ blob:image/*</div>
 </section>
 
 <section class="slide">
-  <h2>Against the alternatives</h2>
+  <h2>Side by side</h2>
   <table>
-    <tr><th></th><th>shared password /<br>app passwords</th><th>sign in as, with<br>AS hooks (Tranquil)</th><th>group host</th><th class="hl">this design</th></tr>
+    <tr><th></th><th>shared password /<br>app passwords</th><th>sign in as, with<br>AS hooks (Tranquil)</th><th>group host</th><th class="hl">delegate config on the account</th></tr>
     <tr><th>where the policy lives</th><td>nowhere</td><td>hooks inside the account's authorization server</td><td>a dedicated service that is the PDS, the AS, and the roles</td><td class="hl">the account's config, on its PDS; roles optionally in a managing app</td></tr>
     <tr><th>the account can live on any PDS</th><td class="ok">yes</td><td class="no">no</td><td class="no">no</td><td class="ok hl">yes</td></tr>
     <tr><th>existing OAuth clients work unchanged</th><td>n/a</td><td class="ok">yes</td><td class="ok">yes</td><td class="ok hl">yes (sign-in as); plus a one-session path for apps that want it</td></tr>
