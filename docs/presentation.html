@@ -131,10 +131,20 @@
 <section class="slide">
   <h2>C · Sign in as the account, at its own server</h2>
   <svg class="seq" id="seq-host"></svg>
-  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the host does</span></div>
+  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the server does</span></div>
   <div class="cols" style="margin-top:.8rem">
-    <div class="card ok"><h3>Keeps</h3>Every existing OAuth client works, because it only sees an ordinary login. Consent is per account, at the account's server, with the client's own scopes. No protocol work. Runs today wherever the server implements it; a group host is this with the roles and a creation API built in.</div>
-    <div class="card no"><h3>Costs</h3>The account must live on a server that implements the mechanism. Roles, the login method, the narrowing, and the log are that server's own, with no shared representation, so moving the account leaves its arrangement behind. In the group-host creation flow, the app ends up holding a credential for the community.</div>
+    <div class="card ok"><h3>Keeps</h3>Every existing OAuth client works, because it only sees an ordinary login. Consent is per account, at the account's server, with the client's own scopes. No protocol work. Runs today wherever the server implements it.</div>
+    <div class="card no"><h3>Costs</h3>The account must live on a server that implements the mechanism. Roles, the login method, the narrowing, and the log are that server's own, with no shared representation, so moving the account leaves its arrangement behind.</div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>C · How the account comes to exist</h2>
+  <svg class="seq" id="seq-host-create"></svg>
+  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the server does</span></div>
+  <div class="cols" style="margin-top:.8rem">
+    <div class="card ok"><h3>Keeps</h3>Two forms, both without protocol work. A person who already has an account on that server creates the community there and names its controllers. Or a dedicated group host offers apps an admin API, so a community is created from inside an app without the founder leaving it.</div>
+    <div class="card no"><h3>Costs</h3>The founder must have an account on that server, or the app must have a relationship with that host. In the admin-API form the app receives and keeps a session for the community, with the app's scopes rather than any one person's. Either way the community is born on that server and stays there.</div>
   </div>
 </section>
 
@@ -235,6 +245,7 @@ blob:image/*</div>
     <tr><th>attribution</th><td class="no">none</td><td>in the app</td><td>in the token chain</td><td><code>act</code>, host log</td><td><code>act</code> + a per-write log</td></tr>
     <tr><th>revocation</th><td>rotate</td><td>the app's, or revoke the app</td><td>revoke the grant</td><td>revoke sessions</td><td>next request</td></tr>
     <tr><th>arrangement moves with the account</th><td>n/a</td><td class="no">no</td><td>with the person</td><td class="no">no</td><td class="ok">yes, as host state</td></tr>
+    <tr><th>how the account is created</th><td>ordinary createAccount; someone keeps the password</td><td>the same; then an admin connects it to the app</td><td>the same; unspecified beyond that</td><td>by a person with an account on that server, or by an app through a host's admin API</td><td>by the founder's own service auth, on any PDS; no credentials, controllers instead</td></tr>
     <tr><th>what changes</th><td>nothing</td><td>nothing</td><td>the protocol: a new token mechanism</td><td>a server implementation, or a new service</td><td>the reference PDS</td></tr>
   </table>
 </section>
@@ -382,24 +393,40 @@ seq("seq-create", {
 
 seq("seq-host", {
   participants: [
-    { id: "app", label: "app service", sub: "runs or partners with a host" },
-    { id: "host", label: "group host", sub: "PDS + authorization server + roles, in one", tone: "accent" },
     { id: "client", label: "any OAuth client", sub: "a steward's" },
+    { id: "host", label: "the account's server", sub: "PDS + authorization server + roles, in one", tone: "accent" },
     { id: "apds", label: "alice's PDS" },
   ],
-  colW: 270,
+  colW: 330,
   steps: [
-    { from: "app", to: "host", text: ["create community (admin auth)", "handle · stewards: [alice] · the app's own OAuth scopes"] },
-    { kind: "self", at: "host", text: ["reserve the handle · PLC identity · account on the wrapped PDS", "spaces and roles · an OAuth session for the app"] },
-    { from: "host", to: "app", kind: "return", text: ["refresh token for the community", "the app now holds a credential for it"] },
-    { from: "app", to: "host", text: ["writes as the community with that session", "bounded by the app's scopes, not by any one steward's role"] },
-    { kind: "note", at: "host", to: "client", text: "a steward in some other client: two-sided OAuth, the same shape as sign-in as the account" },
-    { from: "client", to: "host", text: "OAuth authorize as the community" },
+    { from: "client", to: "host", text: ["OAuth authorize as the community", "the client's usual scopes"] },
+    { from: "host", to: "client", kind: "return", text: "sign-in screen, with a way to sign in as a steward" },
     { from: "host", to: "apds", text: "authn-only login: atproto, no permissions asked" },
     { from: "apds", to: "host", kind: "return", text: "alice authenticated" },
-    { kind: "self", at: "host", text: ["alice's role on this community permits the requested scope?", "issue the community's session; the host's own code, its own log"] },
-    { from: "host", to: "client", kind: "return", text: "session for the community" },
-    { kind: "note", at: "app", to: "apds", text: ["To move the community: standard migration carries the repo and the DID to any PDS.", "The roles, the login method, and the log stay behind unless the next host is a group host too."] },
+    { kind: "self", at: "host", text: ["alice's role on this community permits the requested scope?", "issue the community's session, narrowed to that role; log it"] },
+    { from: "host", to: "client", kind: "return", text: "session for the community, act.sub = alice" },
+    { from: "client", to: "host", text: "createRecord(repo = community, …), an ordinary write" },
+    { from: "host", to: "client", kind: "return", text: "committed as the community" },
+    { kind: "note", at: "client", to: "apds", text: ["To move the community: standard migration carries the repo and the DID to any PDS.", "The roles, the login method, and the log stay behind unless the next server is the same kind."] },
+  ],
+});
+
+seq("seq-host-create", {
+  participants: [
+    { id: "app", label: "an app", sub: "with a relationship to the host" },
+    { id: "host", label: "the account's server", sub: "a group host, or any server with this built in", tone: "accent" },
+    { id: "user", label: "a person with an account there", sub: "the founder" },
+  ],
+  colW: 330,
+  steps: [
+    { kind: "note", at: "app", to: "user", text: "Form 1: a person who already has an account on this server creates the community there" },
+    { from: "user", to: "host", text: ["create a delegated account (signed in as themselves)", "handle · controllers: [me] · what each controller may do"] },
+    { kind: "self", at: "host", text: ["PLC identity · repo · an account with no meaningful password or email", "the founder's own account is the way in, from now on"] },
+    { from: "host", to: "user", kind: "return", text: "{ did, handle }" },
+    { kind: "note", at: "app", to: "user", text: "Form 2: a group host offers apps an admin API, so a community is created from inside an app" },
+    { from: "app", to: "host", text: ["create community (admin auth)", "handle · stewards: [alice] · the app's own OAuth scopes"] },
+    { kind: "self", at: "host", text: ["reserve the handle · PLC identity · account · spaces and roles", "an OAuth session for the app"] },
+    { from: "host", to: "app", kind: "return", text: ["refresh token for the community", "the app now holds a credential for it; the founder never left the app"] },
   ],
 });
 
