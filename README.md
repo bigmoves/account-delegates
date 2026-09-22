@@ -84,7 +84,7 @@ The demo brings up a PLC directory, two PDSes with account delegates, and a mana
 7. The club switches to the `managing-app` policy. The host answers from roles only it holds, signed as the club, and the PDS caches the answer.
 8. The host ejects alice. She succeeds inside the cache TTL and is refused after it.
 9. The club's own writes are untouched; its session goes straight to the stock PDS.
-10. alice creates `riders.test` on pds-a from her own PDS, with service auth. The DID resolves, the account has no usable password, she writes as it, bob cannot. As a controller she adds bob by service auth from her own session; bob, a delegate but not a controller, cannot manage; she makes him a controller and he removes her as a delegate. A taken handle, a caller not among the controllers, and an access token instead of service auth are each refused.
+10. alice creates `riders.test` on pds-a from her own PDS, with service auth. The DID resolves, the account has no usable password, she writes as it, bob cannot. As a controller she adds bob by service auth from her own session; bob, a delegate but not a controller, cannot manage; she makes him a controller and he removes her as a delegate. Clearing every controller of riders is refused, while the club, which has a password, may have none. A taken handle, a caller not among the controllers, and an access token instead of service auth are each refused.
 
 It ends with `All checks passed.` and a non-zero exit if anything did not.
 

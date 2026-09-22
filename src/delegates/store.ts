@@ -67,6 +67,13 @@ export class DelegateStore {
         created_at text not null,
         primary key (account, did)
       );
+      -- Accounts created with no usable credentials: their controllers are the
+      -- only way in, so the last one may not be removed.
+      create table if not exists delegated_account (
+        account text primary key,
+        created_by text not null,
+        created_at text not null
+      );
       create table if not exists delegated_write (
         id integer primary key autoincrement,
         account text not null,
@@ -143,6 +150,15 @@ export class DelegateStore {
     this.db.prepare("delete from delegate_controller where account = ?").run(account);
     const ins = this.db.prepare("insert or ignore into delegate_controller (account, did, created_at) values (?, ?, ?)");
     for (const did of dids) ins.run(account, did, now);
+  }
+
+  markDelegatedAccount(account: string, createdBy: string) {
+    this.db.prepare("insert or ignore into delegated_account (account, created_by, created_at) values (?, ?, ?)").run(account, createdBy, new Date().toISOString());
+  }
+
+  /** True for an account this PDS created without usable credentials of its own. */
+  isDelegatedAccount(account: string): boolean {
+    return !!this.db.prepare("select 1 from delegated_account where account = ?").get(account);
   }
 
   listDelegates(account: string): Delegate[] {

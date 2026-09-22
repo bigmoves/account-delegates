@@ -351,6 +351,10 @@ export function delegatesRouter(opts: Opts): Router {
     }
     if (controllers !== undefined) {
       const dids = validateDids(controllers, "controllers").filter((d) => d !== account);
+      // An account with no credentials of its own has no other way in.
+      if (!dids.length && store.isDelegatedAccount(account)) {
+        throw new XrpcError(400, "LastController", "this account has no credentials of its own; it must keep at least one controller");
+      }
       store.setControllers(account, dids);
       log(`  ${short(account)}: controllers = ${dids.map(short).join(", ") || "(none)"}`);
     }
@@ -425,6 +429,7 @@ export function delegatesRouter(opts: Opts): Router {
         await ctx.actorStore.destroy(did as any);
         throw err;
       }
+      store.markDelegatedAccount(did, caller);
       store.setControllers(did, controllers);
       if (policy) store.setConfig(did, { policy, managingApp });
       for (const d of delegates) store.putDelegate(did, d);

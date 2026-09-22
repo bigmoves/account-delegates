@@ -195,6 +195,10 @@ try {
   check("bob, now a controller, removes alice as a delegate → 200", r.status === 200, `${r.status} ${r.json.error ?? ""}`);
   r = await writeAs(alice, pdsA.url, pdsA.did, riders, "social.grain.group.item", item);
   check("alice can no longer write as riders → 403 NotDelegate (she is still a controller)", r.status === 403 && r.json.error === "NotDelegate", `${r.status} ${r.json.error}`);
+  r = await manage(bob, "com.atproto.server.updateDelegateConfig", { body: { account: riders, controllers: [] } });
+  check("clearing every controller of an account with no credentials → 400 LastController", r.status === 400 && r.json.error === "LastController", `${r.status} ${r.json.error}`);
+  r = await xrpc(pdsA.url, "com.atproto.server.updateDelegateConfig", { token: club.accessJwt, body: { controllers: [] } });
+  check("the club, which has a password, may have no controllers at all", r.status === 200 && r.json.controllers?.length === 0, `${r.status} ${JSON.stringify(r.json)}`);
   r = await create(alice, { handle: "riders.test", controllers: [alice.did] });
   check("the handle is taken → 400 HandleNotAvailable", r.status === 400 && r.json.error === "HandleNotAvailable", `${r.status} ${r.json.error}`);
   r = await create(alice, { handle: "other.test", controllers: [bob.did] });
