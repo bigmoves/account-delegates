@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Account delegates: one fact, three ways</title>
+<title>Acting for an account: an exploration</title>
 <style>
   :root {
     --ink: #1c1c1c; --muted: #666; --line: #d9dce3; --paper: #fff;
@@ -58,18 +58,89 @@
 <body>
 
 <section class="slide">
-  <h1>Account delegates</h1>
-  <p class="lead">One fact on the account. Three ways to use it. A community, a brand, a newsroom: one DID, several people who legitimately write to it, and no shared secret anywhere.</p>
+  <h1>Acting for an account</h1>
+  <p class="lead">An exploration of the ways several people could act as one atproto account, without sharing its secret. A community, a brand, a newsroom, a band: one DID, one repo, and moderators or staff who legitimately write to it.</p>
   <div class="cols" style="margin-top:1.5rem">
-    <div class="card"><h3>Today</h3>A shared password, or app passwords passed around a group chat. Every write looks the same. Nobody can be removed without rotating the secret. Nothing records who did what.</div>
-    <div class="card accent"><h3>Here</h3>The account names its <b>delegates</b> and what each may do. A delegate acts as themselves, bounded by the account, attributed after the fact, revocable at once. Nobody ever holds the account's credential.</div>
+    <div class="card"><h3>Where things stand</h3>A shared password, or app passwords handed around. Every write looks the same on the wire. Nobody can be removed without rotating the secret. Nothing records who did what.</div>
+    <div class="card accent"><h3>What this deck does</h3>Lays out the shapes that have been proposed, on the same axes, with a diagram and the same keeps-and-costs treatment for each. One of them has a running prototype; that is a fact about it, not a verdict.</div>
   </div>
   <p class="kbd" style="margin-top:2rem">Arrow keys or space to move between slides. Prints one slide per page.</p>
-  <div class="num">1</div>
 </section>
 
 <section class="slide">
-  <h2>The fact: delegate configuration, on the account's own PDS</h2>
+  <h2>What the discussion surfaced</h2>
+  <div class="cols">
+    <div class="card"><h3>Ideas</h3>
+      <ul>
+        <li><b>The app holds the account's session.</b> The community signs in to the app once; the app decides which of its users may use that session.</li>
+        <li><b>Delegated scopes at the person's own server.</b> A person's authorization server grants an app the right to act for other accounts, as new scopes.</li>
+        <li><b>Sign in as the account.</b> The account's server authenticates the person at <i>their</i> server, checks their standing, and issues the account's session, narrowed.</li>
+        <li><b>A group host.</b> A dedicated service that is the PDS, the authorization server, and the roles for community accounts, with an admin API for apps.</li>
+        <li><b>Configuration on the account.</b> The account names who may act for it; its own PDS enforces that on writes, on sign-in, and at creation.</li>
+      </ul>
+    </div>
+    <div class="card"><h3>Questions and concerns</h3>
+      <ul>
+        <li><b>Consent has to be legible.</b> What does the person see, and does it name an audience? An open audience is a different decision for five friends than for a community of thousands.</li>
+        <li><b>Delegate writes, not everything.</b> Identity, account, and general calls are the dangerous parts; repo, space, and blob writes are the need.</li>
+        <li><b>Protocol changes are expensive.</b> A new delegated-auth mechanism is months of work; a chain-of-delegation token format may be the long-term answer.</li>
+        <li><b>Existing clients should keep working.</b> A moderator should not need a special app.</li>
+        <li><b>Standing should travel with the person</b>, not be locked inside one app.</li>
+        <li><b>Who holds the credential?</b> An app, a host, or nobody.</li>
+        <li><b>Attribution and revocation.</b> Who did this, and how fast can they be stopped.</li>
+        <li><b>Portability.</b> Can a community move, and does its arrangement move with it?</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The axes</h2>
+  <p class="lead">Every option answers the same questions. The rest of the deck compares on these.</p>
+  <table>
+    <tr><th style="width:24%">Where does the policy live?</th><td>In the app · in the authorization server of the account · in a dedicated host · on the account, as host state any PDS can read</td></tr>
+    <tr><th>Who authenticates, and where?</th><td>Nobody in particular · the person at their own PDS · the person at the account's server</td></tr>
+    <tr><th>What does the client hold?</th><td>The account's session · the person's session · a narrowed session for the account</td></tr>
+    <tr><th>Where is consent shown, and to whom?</th><td>At the person's server (an audience question) · at the account's server, per account · nowhere</td></tr>
+    <tr><th>What can be delegated?</th><td>Everything · presets · writes only</td></tr>
+    <tr><th>Attribution and revocation</th><td>On the wire, in a log, inside one app, or not at all · immediate, next request, or rotate a secret</td></tr>
+    <tr><th>Can the account live anywhere, and move?</th><td>Any PDS · only a server that implements the mechanism · only a dedicated host</td></tr>
+    <tr><th>What has to change?</th><td>Nothing · the app · a server implementation · the reference PDS · the protocol</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>A · The app holds the account's session</h2>
+  <svg class="seq" id="seq-app"></svg>
+  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the app does</span></div>
+  <div class="cols" style="margin-top:.8rem">
+    <div class="card ok"><h3>Keeps</h3>Nothing changes anywhere. Plain OAuth, one consent, honest about who granted what to whom: the account authorized the app. Works today with any PDS.</div>
+    <div class="card no"><h3>Costs</h3>The app holds a credential for the account, with the app's scopes, not any one person's. Roles live inside the app and do not travel. Attribution exists only in the app's own records. Each app must be authorized separately by someone with the account's credentials.</div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>B · Delegated scopes at the person's own server</h2>
+  <svg class="seq" id="seq-scopes"></svg>
+  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what a server does</span></div>
+  <div class="cols" style="margin-top:.8rem">
+    <div class="card ok"><h3>Keeps</h3>Standing travels with the person: one login, one session, and the app acts for whichever accounts allow it. A simple consent screen if the audience is left open.</div>
+    <div class="card no"><h3>Costs</h3>A new protocol mechanism: a token that carries a delegation the account's PDS must verify, which is the kind of change that takes months and several implementations. Consent needs an audience picker the app cannot fill in. The account's own side, who allowed this person, still has to live somewhere.</div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>C · Sign in as the account, at its own server</h2>
+  <svg class="seq" id="seq-host"></svg>
+  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the host does</span></div>
+  <div class="cols" style="margin-top:.8rem">
+    <div class="card ok"><h3>Keeps</h3>Every existing OAuth client works, because it only sees an ordinary login. Consent is per account, at the account's server, with the client's own scopes. No protocol work. Runs today wherever the server implements it; a group host is this with the roles and a creation API built in.</div>
+    <div class="card no"><h3>Costs</h3>The account must live on a server that implements the mechanism. Roles, the login method, the narrowing, and the log are that server's own, with no shared representation, so moving the account leaves its arrangement behind. In the group-host creation flow, the app ends up holding a credential for the community.</div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>D · Configuration on the account</h2>
   <div class="fact">
     <div class="card accent">
       <b>Host state on whatever PDS the account lives on.</b> Like app passwords or preferences: not in the repo, not on the firehose.
@@ -82,32 +153,29 @@
   </div>
   <div class="arrows">↓ ↓ ↓</div>
   <div class="cols">
-    <div class="card"><h3>1 · Delegated write</h3>The person's own app, their own session. A service auth token from their PDS, <code>repo</code> set to the account. One login, no client needs to know the account exists.</div>
-    <div class="card"><h3>2 · Sign in as the account</h3>Any OAuth client, unchanged. The account's PDS authenticates the person at their PDS, checks the config, and issues the account's session, narrowed, with <code>act.sub</code>.</div>
-    <div class="card"><h3>3 · Create from an app</h3>The founder's app creates the community's account on any PDS with the founder's own service auth. No usable credentials; the founder is a controller. The app holds nothing.</div>
+    <div class="card"><h3>D1 · Delegated write</h3>The person's own app, their own session. A service auth token from their PDS, <code>repo</code> set to the account. One login; the client must know how to address another account.</div>
+    <div class="card"><h3>D2 · Sign in as the account</h3>Option C's flow, with the policy read from the configuration instead of hooks. Any OAuth client, unchanged; the session narrowed, with <code>act.sub</code>.</div>
+    <div class="card"><h3>D3 · Create from an app</h3>The founder's app creates the account on any PDS with the founder's own service auth. No usable credentials; the founder is a controller. The app holds nothing.</div>
   </div>
   <p class="muted" style="text-align:center;margin-top:1rem">Same bounds, same matcher the PDS already uses for OAuth scopes, same per-write log for all three.</p>
-  <div class="num">2</div>
 </section>
 
 <section class="slide">
-  <h2>1 · Delegated write</h2>
+  <h2>D1 · Delegated write</h2>
   <svg class="seq" id="seq-write"></svg>
   <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the PDS does</span><span class="no">refusal</span></div>
-  <p class="muted">The app needs one thing from the person's PDS: an <code>rpc:</code> permission to mint service auth for the account's PDS. The default names that PDS as the audience. A general-purpose client asks through a permission set whose title says the audience is open.</p>
-  <div class="num">3</div>
+  <p class="muted">The app needs one thing from the person's PDS: an <code>rpc:</code> permission to mint service auth for the account's PDS. Naming that PDS as the audience keeps the consent bounded; a general-purpose client has to ask for an open audience, and the consent should say so in words.</p>
 </section>
 
 <section class="slide">
-  <h2>2 · Sign in as the account</h2>
+  <h2>D2 · Sign in as the account</h2>
   <svg class="seq" id="seq-signin"></svg>
   <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the PDS does</span></div>
-  <p class="muted">No hooks, no roles in the authorization server: the delegate configuration is what those hooks were looking up. The person's own session at their PDS is never narrowed, never held, never linked.</p>
-  <div class="num">4</div>
+  <p class="muted">The same shape as option C. The difference is where the answer to "may this person act, and how far" comes from: the account's configuration, which any PDS could read, rather than the server's own hooks and roles.</p>
 </section>
 
 <section class="slide">
-  <h2>What a delegated session gets</h2>
+  <h2>D2 · What a narrowed session gets</h2>
   <div class="cols">
     <div class="card">
       <h3>The client asked for</h3>
@@ -129,19 +197,17 @@ blob:image/*</div>
       <p style="margin:.4rem 0 0">A <b>controller</b> additionally keeps <code>account:delegates?action=manage</code>, so the account's settings tool works for them. Nobody else's session keeps any <code>account:</code>, <code>identity:</code>, or <code>rpc:</code> scope.</p>
     </div>
   </div>
-  <div class="num">5</div>
 </section>
 
 <section class="slide">
-  <h2>3 · Create a community from an app</h2>
+  <h2>D3 · Create a community from an app</h2>
   <svg class="seq" id="seq-create"></svg>
   <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the PDS does</span></div>
-  <p class="muted">Same steps as <code>createAccount</code>, minus credentials anyone could use. Operator policy (invites, allowlists, rate limits) applies as it does there. A recovery key can be passed and lands ahead of the PDS's rotation key.</p>
-  <div class="num">6</div>
+  <p class="muted">Same steps as <code>createAccount</code>, minus credentials anyone could use. Operator policy (invites, allowlists, rate limits) applies as it does there. An account with no credentials of its own must keep at least one controller.</p>
 </section>
 
 <section class="slide">
-  <h2>Who may do what</h2>
+  <h2>D · Who may do what</h2>
   <table>
     <tr><th style="width:26%"></th><th>the account's own password<br><span class="muted" style="font-weight:400">if it has one</span></th><th class="hl">a controller</th><th class="hl">a delegate</th><th>anyone else</th></tr>
     <tr><th>write as the account</th><td class="ok">yes</td><td class="hl">only if also a delegate</td><td class="ok hl">yes, within their permissions</td><td class="no">NotDelegate</td></tr>
@@ -151,58 +217,42 @@ blob:image/*</div>
     <tr><th>reach identity, email, password, keys</th><td class="ok">yes</td><td class="no hl">never</td><td class="no hl">never</td><td class="no">never</td></tr>
     <tr><th>be removed, effect</th><td>rotate</td><td class="hl">next request</td><td class="hl">next write, or next request of a session</td><td></td></tr>
   </table>
-  <p class="muted" style="margin-top:1rem">There is no path from a delegate or a controller to the account itself. The blast radius of a compromised delegate is their permissions, and nothing more.</p>
-  <div class="num">7</div>
-</section>
-
-<section class="slide">
-  <h2>Attribution, revocation, policy</h2>
-  <div class="cols">
-    <div class="card"><h3>Attribution</h3>Every delegated write is logged on the account's PDS: delegate, URI, method, time, and which path it took. A delegated session carries <code>act.sub</code> in its token and in <code>getSession</code>. The commit itself is the account's: nothing on the firehose changes.</div>
-    <div class="card"><h3>Revocation</h3>Delegated writes use 60-second single-use tokens: nothing to hunt down. A delegated session is re-checked against the configuration on every request: removal ends it on its next use. Under <b>managing-app</b>, revocation is bounded by the TTL the host chose.</div>
-    <div class="card"><h3>Managing app</h3>A community host holds the roles. The account says "ask <code>did:web:host#community</code> who may write as me". The PDS asks, signed as the account; the host answers with permission strings and an expiry; the PDS caches. The host holds no key and no credential for any community.</div>
+  <div class="cols" style="margin-top:1rem">
+    <div class="card ok"><h3>Keeps</h3>The account can live on any PDS and move with its arrangement. One session or any client, the person's choice. Writes only. Attribution on the wire and in a log; revocation on the next request. No credential held by any app or host.</div>
+    <div class="card no"><h3>Costs</h3>The reference PDS changes: a configuration, one auth path on writes, one login method, one claim, and a creation method. It is not deployable by one operator alone if the goal is "any PDS". For general-purpose clients on D1, the consent at the person's server is still an open audience.</div>
   </div>
-  <div class="num">8</div>
-</section>
-
-<section class="slide">
-  <h2>The host route: the same design, with no PDS change</h2>
-  <svg class="seq" id="seq-host" style="max-height:54vh"></svg>
-  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the host does</span></div>
-  <div class="cols" style="margin-top:.8rem">
-    <div class="card ok"><h3>What you keep</h3>No change to the reference PDS, no protocol work, deployable today by whoever runs the host. Existing OAuth clients work. Consent is per account, on the host. Tranquil is already this for its own accounts.</div>
-    <div class="card no"><h3>What you give up</h3>The community must live on a group host. Roles, the login method, the narrowing, and the log are the host's own, with no shared representation. In the creation flow the app holds a credential for the community. Migration moves the repo and DID, and leaves the moderators behind unless the next host is the same kind.</div>
-  </div>
-  <div class="num">9</div>
 </section>
 
 <section class="slide">
   <h2>Side by side</h2>
-  <table>
-    <tr><th></th><th>shared password /<br>app passwords</th><th>sign in as, with<br>AS hooks (Tranquil)</th><th>group host</th><th class="hl">delegate config on the account</th></tr>
-    <tr><th>where the policy lives</th><td>nowhere</td><td>hooks inside the account's authorization server</td><td>a dedicated service that is the PDS, the AS, and the roles</td><td class="hl">the account's config, on its PDS; roles optionally in a managing app</td></tr>
-    <tr><th>the account can live on any PDS</th><td class="ok">yes</td><td class="no">no</td><td class="no">no</td><td class="ok hl">yes</td></tr>
-    <tr><th>existing OAuth clients work unchanged</th><td>n/a</td><td class="ok">yes</td><td class="ok">yes</td><td class="ok hl">yes (sign-in as); plus a one-session path for apps that want it</td></tr>
-    <tr><th>consent shown where</th><td>none</td><td>account's AS, per account</td><td>group host, per account</td><td class="hl">account's PDS, per account; or the person's PDS, audience-specific by default</td></tr>
-    <tr><th>what may be delegated</th><td>everything</td><td>presets up to owner: identity, account, rpc</td><td>unspecified</td><td class="hl">writes only: <code>repo:</code> <code>space:</code> <code>blob:</code></td></tr>
-    <tr><th>attribution on the wire</th><td class="no">none</td><td class="ok"><code>act</code></td><td>unspecified</td><td class="ok hl"><code>act</code> + a per-write log</td></tr>
-    <tr><th>creation from an app</th><td>n/a</td><td>on the same PDS, by a local user</td><td>admin API; the app keeps a refresh token for the group</td><td class="hl">any PDS, by the founder's own service auth; the app keeps nothing</td></tr>
-    <tr><th>what changes</th><td>nothing</td><td>the AS, per implementation</td><td>a new network service</td><td class="hl">the PDS: config, one auth path on writes, one login method, one claim. No OAuth protocol change.</td></tr>
+  <table style="font-size:.88rem">
+    <tr><th></th><th>shared password /<br>app passwords</th><th>A · app holds<br>the session</th><th>B · delegated scopes<br>at the person's server</th><th>C · sign in as, at<br>the account's server</th><th>D · configuration<br>on the account</th></tr>
+    <tr><th>where the policy lives</th><td>nowhere</td><td>in the app</td><td>the person's AS grants; the account's side unspecified</td><td>the account's AS, or a group host</td><td>the account's config; roles optionally in a managing app</td></tr>
+    <tr><th>who authenticates</th><td>nobody in particular</td><td>the account, once</td><td>the person, at their PDS</td><td>the person, at their PDS, via the account's AS</td><td>the person, at their PDS</td></tr>
+    <tr><th>the account can live on any PDS</th><td class="ok">yes</td><td class="ok">yes</td><td class="ok">yes</td><td class="no">no</td><td class="ok">yes</td></tr>
+    <tr><th>existing OAuth clients work unchanged</th><td>n/a</td><td>the one app</td><td class="no">no</td><td class="ok">yes</td><td class="ok">yes (D2); D1 needs the client to know</td></tr>
+    <tr><th>consent shown where</th><td>none</td><td>account's AS, once, to the app</td><td>person's AS; audience open or picked</td><td>account's AS, per account</td><td>account's PDS per account (D2); person's PDS, audience-specific or open (D1)</td></tr>
+    <tr><th>what may be delegated</th><td>everything</td><td>the app's scopes</td><td>as proposed: repo, space, blob; others debated</td><td>presets, up to everything</td><td>writes only</td></tr>
+    <tr><th>attribution</th><td class="no">none</td><td>in the app</td><td>in the token chain</td><td><code>act</code>, host log</td><td><code>act</code> + a per-write log</td></tr>
+    <tr><th>revocation</th><td>rotate</td><td>the app's, or revoke the app</td><td>revoke the grant</td><td>revoke sessions</td><td>next request</td></tr>
+    <tr><th>arrangement moves with the account</th><td>n/a</td><td class="no">no</td><td>with the person</td><td class="no">no</td><td class="ok">yes, as host state</td></tr>
+    <tr><th>what changes</th><td>nothing</td><td>nothing</td><td>the protocol: a new token mechanism</td><td>a server implementation, or a new service</td><td>the reference PDS</td></tr>
   </table>
-  <div class="num">10</div>
 </section>
 
 <section class="slide">
   <h2>Open questions</h2>
-  <div class="card" style="max-width:52rem">
+  <div class="card" style="max-width:56rem">
     <ul style="font-size:1.1rem">
-      <li><b>Discovery.</b> Which accounts name me, without every PDS notifying every other.</li>
-      <li><b>Calling out as the account.</b> An audience-specific <code>rpc:</code> in a delegate entry, if a session ever needs to call one named host as the account.</li>
+      <li><b>Discovery.</b> How a person's client learns which accounts they may act for, without every PDS notifying every other. Every option shares this.</li>
+      <li><b>The open audience.</b> Whether a general-purpose client's consent at the person's server can be made legible, or whether per-account consent at the account's server is the only honest form.</li>
+      <li><b>Calling out as the account.</b> Whether a session as the account should ever be able to call a named service as the account, and how narrowly.</li>
+      <li><b>Portability.</b> Whether the arrangement (who may act, and how far) should be a defined piece of host state that migrates, whichever option produces it.</li>
       <li><b>Consent records.</b> Keeping a delegate's consent to a client apart from the account's own.</li>
       <li><b>Operator policy on creation.</b> Who may create accounts this way, and how many.</li>
+      <li><b>The long view.</b> Whether a chain-of-delegation token format eventually replaces any of this, and what should be built in the meantime.</li>
     </ul>
   </div>
-  <div class="num">11</div>
 </section>
 
 <script>
@@ -353,6 +403,48 @@ seq("seq-host", {
     { kind: "note", at: "app", to: "apds", text: ["To move the community: standard migration carries the repo and the DID to any PDS.", "The roles, the login method, and the log stay behind unless the next host is a group host too."] },
   ],
 });
+
+seq("seq-app", {
+  participants: [
+    { id: "admin", label: "an admin", sub: "holds the community's credentials" },
+    { id: "app", label: "the app", sub: "e.g. a community feature in a client", tone: "accent" },
+    { id: "cpds", label: "the community's PDS", sub: "any PDS" },
+    { id: "mod", label: "a moderator", sub: "a user of the app" },
+  ],
+  colW: 270,
+  steps: [
+    { from: "admin", to: "app", text: "\"connect our community\"" },
+    { from: "app", to: "cpds", text: ["ordinary OAuth, as the community", "the app's own scopes"] },
+    { from: "cpds", to: "app", kind: "return", text: ["session for the community", "the app holds its refresh token"] },
+    { kind: "self", at: "app", text: ["the app's own notion of who may use that session:", "roles it keeps, checked by its own code"] },
+    { from: "mod", to: "app", text: "\"pin this thread\" (signed in as themselves, to the app)" },
+    { kind: "self", at: "app", text: "is this user allowed? (the app decides)" },
+    { from: "app", to: "cpds", text: ["createRecord as the community", "with the app's session; the PDS sees only the app"] },
+    { from: "cpds", to: "app", kind: "return", text: "committed as the community" },
+    { kind: "note", at: "admin", to: "mod", text: ["Alternative within the same option: each moderator does the OAuth flow as the community themselves,", "and the app keeps one credential per moderator. Same mechanism; more sessions, no admin needed."] },
+  ],
+});
+
+seq("seq-scopes", {
+  participants: [
+    { id: "app", label: "the app", sub: "alice signed in, as herself" },
+    { id: "apds", label: "alice's PDS", sub: "her authorization server", tone: "accent" },
+    { id: "cpds", label: "the community's PDS" },
+  ],
+  colW: 330,
+  steps: [
+    { from: "app", to: "apds", text: ["OAuth authorize, with delegated scopes", "e.g. \"write repo records for accounts I manage\""] },
+    { kind: "self", at: "apds", text: ["consent screen: which accounts? (open audience, or a picker)", "the app cannot supply the audience itself"] },
+    { from: "apds", to: "app", kind: "return", text: "session for alice, carrying the delegated scopes" },
+    { from: "app", to: "cpds", text: ["createRecord(repo = community, …)", "a token that proves: alice, via this app, may act for the community"] },
+    { kind: "self", at: "cpds", text: ["verify the delegation chain (a new token class or format)", "and separately: does the community allow alice? (unspecified here)"] },
+    { from: "cpds", to: "app", kind: "return", text: "committed as the community" },
+    { kind: "note", at: "app", to: "cpds", text: ["What is new: a token that carries a delegation, and a consent that names an audience.", "Both are protocol-level, and a chain-of-delegation format is where this is expected to end up."] },
+  ],
+});
+
+// Slide numbers, computed so they stay right when slides are added or removed.
+document.querySelectorAll(".slide").forEach((s, i) => { const n = document.createElement("div"); n.className = "num"; n.textContent = String(i + 1); s.appendChild(n); });
 
 // Keyboard navigation between slides.
 const slides = [...document.querySelectorAll(".slide")];
