@@ -120,10 +120,10 @@ export function installSignInAs(opts: Opts): Router {
   tokenManager.createToken = async (client: any, clientAuth: any, clientMetadata: any, account: any, deviceId: any, parameters: any, code: any) => {
     const a = store.getAuthorization(parameters.code_challenge);
     if (a && a.account === account.did) {
-      const permissions = await resolver.resolve(a.account, a.delegate);
-      if (!permissions) throw new InvalidGrantError(`${a.delegate} is not a delegate of ${a.account}`);
+      const standing = await resolver.standing(a.account, a.delegate);
+      if (!standing) throw new InvalidGrantError(`${a.delegate} is not a delegate of ${a.account}`);
       const expanded = await provider.lexiconManager.buildTokenScope(parameters.scope, account.did);
-      const scope = narrowScope(expanded, permissions);
+      const scope = narrowScope(expanded, standing.permissions, { controller: standing.controller });
       log(`  ${short(account.did)}: scope for ${short(a.delegate)}: ${parameters.scope} → ${scope}`);
       parameters = { ...parameters, scope };
     }
@@ -141,12 +141,12 @@ export function installSignInAs(opts: Opts): Router {
     if (!info) return info;
     const s = store.getSession(tokenId);
     if (!s || s.account !== info.account.did) return info;
-    const permissions = await resolver.resolve(s.account, s.delegate);
-    if (!permissions) {
+    const standing = await resolver.standing(s.account, s.delegate);
+    if (!standing) {
       throw new Error(`${s.delegate} is no longer a delegate of ${s.account}`);
     }
     const requested = info.data.scope ?? info.data.parameters?.scope ?? "atproto";
-    info.data.scope = narrowScope(requested, permissions);
+    info.data.scope = narrowScope(requested, standing.permissions, { controller: standing.controller });
     return info;
   };
 
@@ -250,12 +250,12 @@ export function installSignInAs(opts: Opts): Router {
     // Authentication is all that was needed; drop the session at their PDS.
     await session.signOut().catch(() => {});
     if (!p || Date.now() - p.at > 10 * 60 * 1000) return void res.status(400).send(page("Sign in as an account", `<p class="no">This sign-in has expired; start again.</p>`));
-    const permissions = await resolver.resolve(p.account, delegate);
-    if (!permissions) {
+    const standing = await resolver.standing(p.account, delegate);
+    if (!standing) {
       log(`  sign-in-as ${short(p.account)}: ${short(delegate)} authenticated but is not a delegate`);
       return void res.status(403).send(page("Not a delegate", `<p class="no">You signed in as <code>${esc(delegate)}</code>, but that account is not a delegate of <code>${esc(p.account)}</code>.</p>`));
     }
-    log(`  sign-in-as ${short(p.account)}: ${short(delegate)} authenticated; delegate with ${permissions.join(" ")}`);
+    log(`  sign-in-as ${short(p.account)}: ${short(delegate)} authenticated; ${standing.controller ? "controller" : "delegate"} with ${standing.permissions.join(" ") || "(no writes)"}`);
     const ticket = randomBytes(16).toString("base64url");
     tickets.set(ticket, { ...p, delegate, at: Date.now() });
     // Back to the host the device cookie belongs to.

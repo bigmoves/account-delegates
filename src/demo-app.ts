@@ -83,6 +83,7 @@ const app = await startApp({
   actFor: [{ did: club.did, handle: club.handle, label: "Peninsula Riders" }],
   managingApps: [{ url: host.url, name: "the community host", serviceRef: host.serviceRef }],
   delegateAud: `${pdsA.did}#atproto_pds`,
+  createOn: { url: pdsA.url, did: pdsA.did },
   network: [
     { name: "app", url: `http://127.0.0.1:${PORTS.app}` },
     { name: "PLC", url: plcUrl },

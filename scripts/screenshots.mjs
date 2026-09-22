@@ -128,6 +128,50 @@ await shot("13-stock-acting-as-club");
 await page.goto(`${APP}/club`, { waitUntil: "load" });
 await shot("14-club-log-and-sessions");
 
+// --- Creating a community from an app -------------------------------------------
+
+// alice, still signed in to her app as an app for one host, creates riders.test.
+await page.goto(`${APP}/alice`, { waitUntil: "load" });
+await page.waitForSelector("form[action='/alice/create']");
+await Promise.all([page.waitForNavigation({ waitUntil: "load" }), page.click("form[action='/alice/create'] button")]);
+await shot("15-alice-created-a-community");
+
+/** Drive whatever PDS screens come up (password, account list, consent) until the browser is back at the app. */
+async function driveBackToApp(password) {
+  for (let i = 0; i < 8 && !page.url().startsWith(APP); i++) {
+    await page.waitForFunction((app) =>
+      location.href.startsWith(app) ||
+      !!document.querySelector("input[type=password]") ||
+      [...document.querySelectorAll("button")].some((b) => /^authorize$/i.test(b.innerText) || /\.test$/.test(b.innerText.trim())), {}, APP);
+    if (page.url().startsWith(APP)) break;
+    if (await page.$("input[type=password]")) {
+      await page.type("input[type=password]", password);
+      await clickText(/^sign in$/);
+    } else if (await hasButton(/^authorize$/)) {
+      await settled();
+      await clickText(/^authorize$/);
+    } else {
+      await clickText(/\.test$/);
+    }
+    await new Promise((r) => setTimeout(r, 600));
+  }
+  await backAtApp();
+  await page.waitForNetworkIdle({ idleTime: 300 }).catch(() => {});
+}
+
+// The founder opens the tool as riders: she signs in as a controller, never a password for riders.
+await page.goto(`${APP}/club`, { waitUntil: "load" });
+await Promise.all([page.waitForNavigation({ waitUntil: "load" }), page.click("form[action='/club/sign-out'] button")]);
+await page.waitForSelector("form[action='/oauth/club/start']");
+await page.$eval("form[action='/oauth/club/start'] input[name=who]", (el) => { el.value = "riders.test"; });
+await Promise.all([page.waitForNavigation({ waitUntil: "load" }), page.click("form[action='/oauth/club/start'] button[name=as_delegate]")]);
+await page.waitForSelector("input[name=handle]");
+await page.type("input[name=handle]", "alice.test");
+await Promise.all([page.waitForNavigation({ waitUntil: "load" }), page.click("form[action='/oauth/delegate'] button")]);
+await driveBackToApp("alice-pass");
+await page.waitForSelector("form[action='/club/controllers']");
+await shot("16-tool-as-controller");
+
 await browser.close();
 console.log("done");
 process.exit(0);

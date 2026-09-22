@@ -32,6 +32,8 @@ export type AppOpts = {
   managingApps: { url: string; name: string; serviceRef: string }[];
   /** The PDS the accounts this app acts for live on, as `did#atproto_pds`, for an audience-specific permission: what an app for one host asks for. */
   delegateAud: string;
+  /** Where this app creates communities: the same PDS, by URL. */
+  createOn: { url: string; did: string };
   /** Shown on the index page. */
   network: { name: string; url: string; did?: string }[];
   log: (line: string) => void;
@@ -57,7 +59,7 @@ const SCOPES = {
    * recommends. The permission names the PDS the accounts live on, so the
    * consent is bounded to that server; the screen still renders it generically.
    */
-  raw: (aud: string) => `atproto rpc:com.atproto.repo.createRecord?aud=${encodeURIComponent(aud)}`,
+  raw: (aud: string) => `atproto rpc?lxm=com.atproto.repo.createRecord&lxm=com.atproto.server.createDelegatedAccount&aud=${encodeURIComponent(aud)}`,
   /**
    * A stock client that has never heard of delegates. It signs in as whatever
    * account is typed in, asking for what an ordinary app asks for. When the
@@ -156,6 +158,8 @@ export async function startApp(opts: AppOpts) {
   const outcomes: { at: string; what: string; status: number; detail: string; ok: boolean }[] = [];
   /** The same, for the stock client. */
   const stockOutcomes: typeof outcomes = [];
+  /** Communities created from alice's app, this run. */
+  const created: ActFor[] = [];
 
   /** The accounts a person may act for, as far as this app can tell, and where each answer came from. */
   async function actingAsChoices(did: string): Promise<(ActFor & { from: string })[]> {
@@ -173,6 +177,9 @@ export async function startApp(opts: AppOpts) {
     }
     for (const a of opts.actFor) {
       if (!out.some((c) => c.did === a.did)) out.push({ ...a, from: "configured in this app" });
+    }
+    for (const a of created) {
+      if (!out.some((c) => c.did === a.did)) out.push({ ...a, from: "created from this app" });
     }
     return out;
   }
@@ -292,9 +299,11 @@ export async function startApp(opts: AppOpts) {
     const s = await sessionFor(req, "club");
     if (!s) {
       return void res.send(page("The club", `
-<p>The controller's tool. It signs in <b>as the club</b>, once, with the one permission this needs: <code>${esc(SCOPES.club)}</code>. It never posts as the club; the delegates do that as themselves.</p>
-<form method="post" action="/oauth/club/start"><label>Account <input type="text" name="who" value="club.test"></label><button>Sign in as the club</button></form>
-<div class="note">What to look for on the consent screen: an account section with a <b>Delegates</b> card. That card exists because the RFC adds the <code>account:delegates</code> attribute; this demo teaches the installed provider UI about it (see <code>scripts/patch-account-delegates.mjs</code>).</div>`, flash));
+<p>The controller's tool. It signs in <b>as the account</b>, once, with the one permission this needs: <code>${esc(SCOPES.club)}</code>. It never posts as the account; the delegates do that as themselves.</p>
+<form method="post" action="/oauth/club/start"><label>Account <input type="text" name="who" value="club.test"></label>
+<button>Sign in with the account's password</button> <span class="muted">the club has one: <code>club-pass</code></span><br><br>
+<button name="as_delegate" value="1">Sign in as a controller</button> <span class="muted">authenticate at <i>your</i> PDS; for an account with no password, such as one created from an app</span></form>
+<div class="note">What to look for on the consent screen: an account section with a <b>Delegates</b> card. That card exists because the RFC adds the <code>account:delegates</code> attribute; this demo teaches the installed provider UI about it (see <code>scripts/patch-account-delegates.mjs</code>). A controller's sign-in keeps that permission through the narrowing; anyone else's loses it, and this tool is refused.</div>`, flash));
     }
     const { session } = s;
     const cfg = await xrpc(session, "com.atproto.server.getDelegateConfig");
@@ -307,9 +316,19 @@ export async function startApp(opts: AppOpts) {
 <form method="post" action="/club/sign-out"><button>Sign out</button></form>`, flash));
     }
     const delegates: any[] = cfg.json.delegates ?? [];
+    const controllers: string[] = cfg.json.controllers ?? [];
+    const who = await xrpc(session, "com.atproto.server.getSession");
+    const act = who.json.act?.sub as string | undefined;
     const firstPerson = opts.network.find((n) => n.name.startsWith("person"));
     res.send(page("The club", `
-<p>Signed in as <code>${esc(session.did)}</code> with scope <code>${esc(info?.scope ?? "?")}</code>. <form class="inline" method="post" action="/club/sign-out"><button>Sign out</button></form></p>
+<p>Signed in as <code>${esc(session.did)}</code> (<code>@${esc(who.json.handle ?? "?")}</code>) with scope <code>${esc(info?.scope ?? "?")}</code>.${act ? ` <b>Acting:</b> <code>${esc(act)}</code>, a controller, signed in as the account.` : ""} <form class="inline" method="post" action="/club/sign-out"><button>Sign out</button></form></p>
+
+<h2>Controllers</h2>
+<p class="muted">DIDs that may manage this configuration: by signing in as the account, or by service auth from their own session. The account's own password, if it has one, can too. Controllers are not delegates; add a controller below as a delegate as well if they should write.</p>
+<form method="post" action="/club/controllers">
+<label>Controllers, one per line<br><textarea name="controllers" rows="2" style="width:100%;font:13px ui-monospace,monospace">${esc(controllers.join("\n"))}</textarea></label>
+<button>Save controllers</button>
+</form>
 
 <h2>Policy</h2>
 <form method="post" action="/club/policy">
@@ -357,6 +376,13 @@ ${(sessions.json.sessions ?? []).length ? (sessions.json.sessions as any[]).map(
     const r = await xrpc(s.session, "com.atproto.server.updateDelegateConfig", { body });
     res.redirect(`/club?flash=${encodeURIComponent(r.status === 200 ? `Policy is now ${r.json.policy}.` : `updateDelegateConfig → ${r.status} ${r.json.error}: ${r.json.message}`)}`);
   }));
+  app.post("/club/controllers", wrap(async (req, res) => {
+    const s = await sessionFor(req, "club");
+    if (!s) return void res.redirect("/club");
+    const controllers = String(req.body.controllers ?? "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const r = await xrpc(s.session, "com.atproto.server.updateDelegateConfig", { body: { controllers } });
+    res.redirect(`/club?flash=${encodeURIComponent(r.status === 200 ? `Controllers: ${(r.json.controllers ?? []).length}.` : `updateDelegateConfig → ${r.status} ${r.json.error}: ${r.json.message}`)}`);
+  }));
   app.post("/club/delegates/put", wrap(async (req, res) => {
     const s = await sessionFor(req, "club");
     if (!s) return void res.redirect("/club");
@@ -400,10 +426,55 @@ ${choices.map((c, i) => `<label><input type="radio" name="as" value="${esc(c.did
 </p>
 </form>
 
+<h2>Create a community</h2>
+<form method="post" action="/alice/create">
+<label>Handle <input type="text" name="handle" value="riders.test"></label>
+<label><input type="checkbox" name="asDelegate" value="1" checked> Also make me a delegate for <code>social.grain.group.item</code></label>
+<button>Create it on ${esc(new URL(opts.createOn.url).host)}</button>
+</form>
+<div class="note"><b>What this does.</b> The app asks alice's own PDS for a service auth token addressed to the community's future PDS and bound to <code>createDelegatedAccount</code>, and calls it. That PDS mints the DID and repo, gives the account no usable credentials (an unguessable password it discards, an email nobody reads), and records alice as its <b>controller</b>. The app never holds anything for the community. From here alice writes as it from this app, or opens <a href="/club">the tool</a> and signs in as it as a controller.${door === "set" ? " <span class=\"no\">Your session came through the permission set, which covers repo writes only; sign in as an app for one host to create.</span>" : ""}</div>
+
 <h2>What happened</h2>
 <table><tr><th>When</th><th>What</th><th>Outcome</th></tr>
 ${outcomes.length ? outcomes.map((o) => `<tr><td class="muted">${esc(o.at)}</td><td>${esc(o.what)}</td><td class="${o.ok ? "ok" : "no"}">${esc(o.status)} ${esc(o.detail)}</td></tr>`).join("") : `<tr><td colspan="3" class="muted">Nothing yet.</td></tr>`}
 </table>`, flash));
+  }));
+
+  app.post("/alice/create", wrap(async (req, res) => {
+    const s = await sessionFor(req, "alice");
+    if (!s) return void res.redirect("/alice");
+    const { session } = s;
+    const handle = String(req.body.handle ?? "").trim();
+    const asDelegate = !!req.body.asDelegate;
+    const now = new Date().toISOString();
+    const label = `create ${handle}`;
+    const push = (status: number, detail: string, ok: boolean) => outcomes.unshift({ at: now, what: label, status, detail, ok });
+    const lxm = "com.atproto.server.createDelegatedAccount";
+    const sa = await session.fetchHandler(`/xrpc/com.atproto.server.getServiceAuth?${new URLSearchParams({ aud: `${opts.createOn.did}#atproto_pds`, lxm })}`);
+    const saJson: any = await sa.json().catch(() => ({}));
+    if (sa.status !== 200) {
+      push(sa.status, `getServiceAuth at alice's PDS: ${saJson.error ?? ""} ${saJson.message ?? ""}`.trim(), false);
+      log(`  app: alice: ${label} → getServiceAuth ${sa.status} ${saJson.error}`);
+      return void res.redirect("/alice");
+    }
+    const r = await fetch(`${opts.createOn.url}/xrpc/${lxm}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${saJson.token}` },
+      body: JSON.stringify({
+        handle,
+        controllers: [session.did],
+        delegates: asDelegate ? [{ did: session.did, permissions: ["repo:social.grain.group.item?action=create&action=delete"], label: "founder" }] : [],
+      }),
+    });
+    const j: any = await r.json().catch(() => ({}));
+    if (r.status === 200) {
+      created.push({ did: j.did, handle: j.handle, label: j.handle });
+      push(200, `created ${j.did} as ${j.handle}; you are its controller`, true);
+    } else {
+      push(r.status, `${j.error ?? ""}: ${j.message ?? ""}`, false);
+    }
+    log(`  app: alice: ${label} → ${r.status} ${j.error ?? j.did ?? ""}`);
+    res.redirect("/alice");
   }));
 
   app.post("/alice/write", wrap(async (req, res) => {

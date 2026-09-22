@@ -73,6 +73,9 @@ importers:
       '@atproto/xrpc-server':
         specifier: 0.0.0-spaces-alpha-20260910230440
         version: 0.0.0-spaces-alpha-20260910230440
+      '@did-plc/lib':
+        specifier: 0.0.4
+        version: 0.0.4
       '@did-plc/server':
         specifier: 0.0.1
         version: 0.0.1

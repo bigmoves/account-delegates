@@ -21,6 +21,19 @@ export class DelegateResolver {
     this.cache.clear();
   }
 
+  /**
+   * Everything the account grants this DID: write permissions as a delegate,
+   * and whether they may manage the configuration as a controller. Null when
+   * the DID is neither. A controller with no delegate entry may sign in as
+   * the account and manage it, but write nothing.
+   */
+  async standing(account: string, did: string): Promise<{ permissions: string[]; controller: boolean } | null> {
+    const controller = this.opts.store.isController(account, did);
+    const permissions = await this.resolve(account, did);
+    if (!permissions && !controller) return null;
+    return { permissions: permissions ?? [], controller };
+  }
+
   /** The delegate's permissions for this account, or null. RFC § Delegates, § The managing-app policy. */
   async resolve(account: string, did: string): Promise<string[] | null> {
     const { ctx, store, log } = this.opts;

@@ -59,6 +59,14 @@ export class DelegateStore {
         created_at text not null,
         primary key (account, did)
       );
+      -- Controllers: DIDs that may manage this configuration, for an account
+      -- that has no password of its own (one created for a community from an app).
+      create table if not exists delegate_controller (
+        account text not null,
+        did text not null,
+        created_at text not null,
+        primary key (account, did)
+      );
       create table if not exists delegated_write (
         id integer primary key autoincrement,
         account text not null,
@@ -120,6 +128,21 @@ export class DelegateStore {
           "on conflict(account) do update set policy = excluded.policy, managing_app = excluded.managing_app",
       )
       .run(account, cfg.policy, cfg.managingApp ?? null);
+  }
+
+  listControllers(account: string): string[] {
+    return (this.db.prepare("select did from delegate_controller where account = ? order by created_at").all(account) as { did: string }[]).map((r) => r.did);
+  }
+
+  isController(account: string, did: string): boolean {
+    return !!this.db.prepare("select 1 from delegate_controller where account = ? and did = ?").get(account, did);
+  }
+
+  setControllers(account: string, dids: string[]) {
+    const now = new Date().toISOString();
+    this.db.prepare("delete from delegate_controller where account = ?").run(account);
+    const ins = this.db.prepare("insert or ignore into delegate_controller (account, did, created_at) values (?, ?, ?)");
+    for (const did of dids) ins.run(account, did, now);
   }
 
   listDelegates(account: string): Delegate[] {

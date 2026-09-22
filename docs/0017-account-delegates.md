@@ -106,7 +106,25 @@ An account with no configuration behaves exactly as today. `policy` defaults to 
 
 ### Managing delegates
 
-Delegates are a credential-equivalent setting, like an app password. The management methods (below) require an OAuth session for the account itself holding the new `account:delegates` permission, or a legacy full-access session. They are never available through a delegated write, through an app password, or to a delegate. A delegate cannot add, change, or remove delegates, including their own entry.
+Delegates are a credential-equivalent setting, like an app password. The management methods (below) are never available through a delegated write, through an app password, or to a plain delegate. A delegate cannot add, change, or remove delegates, including their own entry. Three callers can:
+
+- **The account itself**, with an OAuth session holding the new `account:delegates` permission, or a legacy full-access session.
+- **A controller, signed in as the account.** The [narrowing](#sign-in-as-the-account) keeps `account:delegates` in a controller's session and in nobody else's, so the account's own settings tool works for a controller through a sign-in as the account.
+- **A controller, from their own session**, with a service auth token signed as themselves, bound to the management method, naming the account in an `account` parameter.
+
+### Controllers
+
+The configuration carries a list of **controllers**: DIDs that may manage it. A controller is not a delegate; a controller who should also write is listed as a delegate as well, with their own bounds. Controllers exist for accounts that have no credentials of their own, which is what an account created for a community from an app is (below): with no password anywhere, the controllers are the only way in. An account with a password keeps it as its root credential; controllers are in addition. Controllers may add and remove controllers, including the last one, which leaves an account with a password to its password and an account without one to its managing app's mercy; a PDS MAY refuse to remove the last controller of an account with no password.
+
+### Creating an account for a community, from an app
+
+A community should be creatable from inside an app, by the person founding it, without that person leaving the app, and without the app holding anything for the community afterwards. `com.atproto.server.createDelegatedAccount` does that. The founder's app asks the founder's own PDS for a service auth token addressed to the PDS the community should live on and bound to the method, and calls it with a handle, the initial controllers (which MUST include the caller), any initial delegates, and optionally a policy and managing app.
+
+The PDS creates the account as `createAccount` would, except that the account gets no credentials of its own: no password anyone knows, and no email anyone reads. The PDS's OAuth machinery may require both to exist, in which case the PDS sets an unguessable password and discards it. It then records the controllers and delegates. The founder is the first controller; they may write as the account at once if they listed themselves as a delegate, and may open the account's settings by signing in as it. The app never sees a credential for the community, and if the app is later gone the community is unaffected.
+
+Operator policy applies as it does to `createAccount`: invite codes, allowlists, rate limits, and handle domains. A PDS MAY require that the caller's own account be on an allowlist of hosts. A recovery key MAY be given and lands ahead of the PDS's rotation key, as with `createAccount`, so that the founder holds a credible exit.
+
+This is the creation flow the "group host" design sketch describes, without the group host: the community's PDS is any PDS with this feature, and the app's relationship with it is an ordinary one.
 
 ### The `managing-app` policy
 
@@ -317,12 +335,15 @@ All under `com.atproto.server`, alongside the app-password methods they resemble
 
 | Method | Served by | Type | Auth | Description |
 |---|---|---|---|---|
-| `getDelegateConfig` | PDS | query | OAuth `account:delegates` | The account's policy, managing app, and delegates. |
-| `updateDelegateConfig` | PDS | procedure | OAuth `account:delegates` | Set `policy` and `managingApp`. |
-| `putDelegate` | PDS | procedure | OAuth `account:delegates` | Add or replace a delegate entry. |
-| `removeDelegate` | PDS | procedure | OAuth `account:delegates` | Remove a delegate. |
-| `listDelegatedWrites` | PDS | query | OAuth `account:delegates` | The attribution log, newest first, with a cursor. Each entry says whether it came as a delegated write or through a delegated session. |
-| `listDelegatedSessions` | PDS | query | OAuth `account:delegates` | The delegated sessions that exist: delegate, client, and when. |
+| `getDelegateConfig` | PDS | query | management (see above) | The account's policy, managing app, controllers, and delegates. |
+| `updateDelegateConfig` | PDS | procedure | management | Set `policy` and `managingApp`, and/or replace `controllers`. |
+| `putDelegate` | PDS | procedure | management | Add or replace a delegate entry. |
+| `removeDelegate` | PDS | procedure | management | Remove a delegate. |
+| `listDelegatedWrites` | PDS | query | management | The attribution log, newest first, with a cursor. Each entry says whether it came as a delegated write or through a delegated session. |
+| `listDelegatedSessions` | PDS | query | management | The delegated sessions that exist: delegate, client, and when. |
+| `createDelegatedAccount` | PDS | procedure | service auth from the first controller | Create an account with no credentials of its own, with its controllers and delegates. |
+
+"Management" is any of the three callers under [Managing delegates](#managing-delegates). A service-auth caller names the account in an `account` parameter; the others act on the session's own account.
 | `checkDelegate` | managing app | query | service auth from the account | Given `account` and `did`, the delegate's permissions and an optional `expiresAt`. |
 
 ### Lexicon sketches
@@ -405,6 +426,7 @@ Against the `permissioned-data-alpha` branch of `bluesky-social/atproto` at `382
 - **Auth.** A `delegatedWrite` verifier in `auth-verifier.ts` that accepts either the existing `authorization()` output or a service auth token with `audience` checked against the PDS's own DID, `lxm` required, and `jti` consumed. `verifyServiceJwt` already resolves the issuer's `#atproto` key.
 - **Handlers.** The `did !== auth.credentials.did` checks in `repo/createRecord.ts`, `putRecord.ts`, `deleteRecord.ts`, `applyWrites.ts` and the `repo must match authenticated user` checks in `space/*.ts` and `space/util.ts` become one `assertRepoAccess(auth, repo, writes)` that, for a service-auth caller, loads the delegate's permissions and evaluates them with `@atproto/oauth-scopes`' `ScopePermissions`, the class the OAuth path already uses. `uploadBlob` learns the `repo` parameter.
 - **Managing app.** `simplespace/manager.ts` already implements the pattern of signing a call as the authority and caching a policy answer; `checkDelegate` follows it.
+- **Creation.** `createDelegatedAccount.ts` beside `createAccount.ts`, sharing its DID, PLC, and repo setup, with a `delegate_controller` table beside `delegate`.
 - **Sign-in as the account.** In `@atproto/oauth-provider`, one sign-in method beside the password one, which runs a nested authorization against the person's PDS and, on success, binds the request to the delegate. In the token manager, the scope passed to `buildTokenScope` is intersected with the delegate's permissions when the request is bound, and again in `loadTokenClaims` against the current configuration; `createAccessToken` adds `act`. In `@atproto/oauth-provider-ui`, one link on the sign-in form. The prototype does all of this through the provider's public hooks (`onAuthorized`, `onCreateToken`, `onSignedIn`) and two wrapped internals, with the nested-login pages as ordinary routes on the PDS.
 - **Nothing** in the OAuth protocol, the token format beyond one optional claim, the repo format, or the sync protocol.
 

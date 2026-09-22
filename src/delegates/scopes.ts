@@ -38,17 +38,24 @@ function intersectBlob(r: Bp, d: Bp): string | null {
   return new BlobPermission([...accept] as any).toString();
 }
 
+/** The one account permission a controller's session keeps: managing delegates. */
+const isDelegatesManage = (scope: string) => /^account:delegates(\?action=manage)?$/.test(scope);
+
 /**
  * The intersection of a requested scope (already expanded, no `include:`)
  * with a delegate's permission strings, as a scope string. `atproto` is kept
- * when requested; everything a delegate may not hold is dropped.
+ * when requested; everything a delegate may not hold is dropped. A
+ * controller's session additionally keeps `account:delegates`, so the
+ * account's own settings tool works for them through a sign-in as the account.
  */
-export function narrowScope(requested: string, permissions: string[]): string {
+export function narrowScope(requested: string, permissions: string[], opts: { controller?: boolean } = {}): string {
   const out = new Set<string>();
   const repoPerms = permissions.map((p) => RepoPermission.fromString(p)).filter((p): p is Rp => !!p);
   const blobPerms = permissions.map((p) => BlobPermission.fromString(p)).filter((p): p is Bp => !!p);
   for (const scope of requested.split(" ").filter(Boolean)) {
     if (scope === "atproto") {
+      out.add(scope);
+    } else if (opts.controller && isDelegatesManage(scope)) {
       out.add(scope);
     } else if (scope.startsWith("repo:")) {
       const r = RepoPermission.fromString(scope);
@@ -70,7 +77,7 @@ export function narrowScope(requested: string, permissions: string[]): string {
       // the repo pattern above.
       if (permissions.includes(scope)) out.add(scope);
     }
-    // rpc:, account:, identity:, transition:* — never in a delegated session.
+    // rpc:, identity:, transition:*, and every other account: — never in a delegated session.
   }
   return [...out].join(" ");
 }

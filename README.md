@@ -9,6 +9,8 @@ The problem it answers: a community, a brand, or any shared identity is one DID,
 
 Same delegate configuration, same bounds, same log. The first path is the proposal's primitive; the second is what makes it usable from every existing client today, and is the shape Tranquil PDS already runs for its delegated accounts.
 
+A community account can also be **created from an app**, with no password anyone knows. The founder's app asks the founder's own PDS for a service auth token and calls `createDelegatedAccount` on the PDS the community should live on. That PDS mints the DID and repo and records the founder as a **controller**: someone who may manage the account's delegates, either from their own session by service auth, or by signing in as the account, where the narrowing keeps `account:delegates` for a controller and for nobody else. The app that created the community holds nothing for it.
+
 ## The flows
 
 A delegated write, from the delegate's own session:
@@ -82,6 +84,7 @@ The demo brings up a PLC directory, two PDSes with account delegates, and a mana
 7. The club switches to the `managing-app` policy. The host answers from roles only it holds, signed as the club, and the PDS caches the answer.
 8. The host ejects alice. She succeeds inside the cache TTL and is refused after it.
 9. The club's own writes are untouched; its session goes straight to the stock PDS.
+10. alice creates `riders.test` on pds-a from her own PDS, with service auth. The DID resolves, the account has no usable password, she writes as it, bob cannot. As a controller she adds bob by service auth from her own session; bob, a delegate but not a controller, cannot manage; she makes him a controller and he removes her as a delegate. A taken handle, a caller not among the controllers, and an access token instead of service auth are each refused.
 
 It ends with `All checks passed.` and a non-zero exit if anything did not.
 
@@ -110,13 +113,18 @@ Open `http://127.0.0.1:2704`. Three doors. **The club** is the controller's tool
 
 The club sees both paths in one log, with the path each took, and the delegated sessions that exist.
 
+| | |
+|---|---|
+| ![alice created a community](docs/screenshots/15-alice-created-a-community.png) | ![The tool, as a controller](docs/screenshots/16-tool-as-controller.png) |
+| alice creates `riders.test` from her own app. Her PDS issued the service auth; the community's PDS did the rest. She is its controller and, by her own choice, a delegate. | The tool, signed in as `riders.test` by alice as a controller. No password for riders exists. Her session kept `account:delegates`; a delegate who is not a controller gets `atproto` alone and the tool is refused. |
+
 Nothing on alice's own consent screen names the club. What she consents to is that her app may write, as her, to accounts that name her; whether the club names her is the club's decision, on the club's PDS. In the sign-in-as path the roles reverse: the consent is the club's, on the club's PDS, and alice's PDS is asked for nothing but who she is. Discovery, how alice's app learns which accounts name her, is the proposal's open question, and the page takes its third option: after sign-in the app asks the community host it knows for accounts where alice holds a role, and adds what it was configured with, each entry saying where it came from.
 
 Two ways to check it without clicking:
 
 ```sh
 pnpm demo:app            # in one terminal
-pnpm demo:walk           # in another: both flows, headless, 11 steps, checked
+pnpm demo:walk           # in another: both flows and the creation flow, headless, 14 steps, checked
 node scripts/screenshots.mjs   # or: the same in headless Chrome, producing docs/screenshots/
 ```
 
@@ -134,7 +142,7 @@ Two things the alpha's permission sets impose on the proposal's example, found b
 
 | Path | What it is |
 |---|---|
-| `src/delegates/router.ts` | The write path for both kinds of delegate (service auth, or a delegated session), the same bounding and log for each, `getSession` with `act`, and the management methods. Each block names where it would live in the PDS. |
+| `src/delegates/router.ts` | The write path for both kinds of delegate (service auth, or a delegated session), the same bounding and log for each, `getSession` with `act`, the management methods with their three kinds of caller, and `createDelegatedAccount`. Each block names where it would live in the PDS. |
 | `src/delegates/sign-in-as.ts` | Sign-in as the account: the nested login pages, and the provider integration that binds a request to a delegate, narrows the token, and puts `act.sub` on it. |
 | `src/delegates/resolve.ts` | "Is this DID a delegate of that account, and how far": the delegate-list and managing-app policies, shared by both paths. |
 | `src/delegates/scopes.ts` | The intersection of a requested scope with a delegate's permissions. |
@@ -156,6 +164,8 @@ Two things the alpha's permission sets impose on the proposal's example, found b
 
 **Proved for sign-in as the account:** a client that knows nothing about delegates gets a session for the account through the stock OAuth flow and the stock consent screen; the person authenticates at their own PDS, which is asked for `atproto` only and keeps no relationship with the account's PDS; the token's scope is the client's request intersected with the delegate's permissions, and nothing outside `repo:`, `blob:`, `space:` survives; the token and `getSession` carry `act.sub`; ordinary writes with it are bounded, committed as the account, and logged with the path; the device account created for the consent screen is removed once consent happens, and a leftover one cannot authorize another client; removing the delegate ends the session on its next request, and the client cannot refresh it. The delegate's own session at their PDS is never narrowed, never held.
 
+**Proved for creation from an app:** a person on one PDS creates an account on another with nothing but their own session, the created account's DID resolves and its repo accepts delegated writes at once, the account has no password anyone knows and no reachable email, the creator is a controller and manages the account by service auth from their own session or by signing in as it, a delegate who is not a controller can do neither, and the creating app holds nothing for the account. The PDS's OAuth machinery requires an `account` row with an email and a password hash, so the account gets an unguessable password the PDS discards and an address under `.invalid`; the transcript checks that a password login is refused.
+
 **Not built here, on purpose:**
 
 - The delegate router is an extension mounted in front of the PDS, not a patch to it. The proposal's reference-implementation notes say where each piece goes; this is the same logic one process boundary out, so that a clone runs from npm. The sign-in-as integration uses the provider's public hooks and wraps two of its internals (token creation and the token store's read) for scope narrowing; inside the PDS those are two lines in the token manager.
@@ -164,6 +174,7 @@ Two things the alpha's permission sets impose on the proposal's example, found b
 - A delegated session is an OAuth session, so it is for OAuth clients, and only `repo:`, `blob:`, and `space:` survive its narrowing. `transition:*` is dropped on purpose: it is a bridge clients are leaving, and giving it delegate semantics would mean inventing meaning for a scope meant to disappear. The Bluesky app signs in with passwords rather than OAuth today, so it is outside this path either way; for it, the only route to a shared account remains an app password on that account, which is what the proposal exists to replace. `space:` permissions survive narrowing only when the delegate holds them verbatim.
 - Consent through a delegate is recorded by the stock provider as the account's consent for that client, so a later sign-in by the account's own controller to the same client skips the consent screen. A PDS adopting this would record delegate consent separately.
 - `act` is on the access token and in `getSession`. It is not yet carried into inter-service tokens the PDS mints from a delegated session; `getServiceAuth` is outside a delegate's surface in this prototype.
+- Operator policy on `createDelegatedAccount`: invites, allowlists, and rate limits apply as for `createAccount`, and the demo PDS requires none. A recovery key can be passed at creation and lands ahead of the PDS's rotation key, but nothing in the demo exercises PLC recovery.
 - The account portal's own settings pages, space writes, `uploadBlob`, `getDelegationToken`, the `simplespace` management methods, and rate limiting by both account and delegate, as before.
 
 ## Why this shape

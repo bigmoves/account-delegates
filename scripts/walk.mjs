@@ -14,7 +14,7 @@ import http from "node:http";
 
 const APP = process.env.APP_URL ?? "http://127.0.0.1:2704";
 const API = "/@atproto/oauth-provider/~api";
-const PASSWORDS = { "club.test": "club-pass", "alice.test": "alice-pass" };
+const PASSWORDS = { "club.test": "club-pass", "alice.test": "alice-pass", "bob.test": "bob-pass" };
 
 let failures = 0;
 const check = (what, ok, detail) => {
@@ -116,7 +116,9 @@ async function accept(authorizeUrl, did) {
 
 /** Sign in and consent on the PDS's consent page, as the React app would. Returns the app URL the PDS sends the browser back to. */
 async function consent(authorizeUrl, username) {
-  const { data } = await authorizePage(authorizeUrl);
+  const { data, redirect } = await authorizePage(authorizeUrl);
+  // Already signed in there and the client already authorized: the PDS skips straight back.
+  if (redirect) return { data, loc: redirect };
   const signIn = await providerApi(authorizeUrl, "/sign-in", { locale: "en", username, password: PASSWORDS[username], remember: true });
   if (signIn.status !== 200) throw new Error(`sign-in ${username}: ${signIn.status} ${JSON.stringify(signIn.json)}`);
   const loc = await accept(authorizeUrl, signIn.json.account.sub ?? signIn.json.account.did);
@@ -200,7 +202,7 @@ check("alice's next write → 403 NotDelegate", /403 NotDelegate/.test(html.spli
 step("6. An app for one host: the permission names the club's PDS, generic consent screen.");
 await post("/alice/sign-out", {});
 const raw = await signInAt("raw", "alice.test");
-check("consent page scope is one rpc permission bound to the club's PDS, no permission set", /^atproto rpc:com\.atproto\.repo\.createRecord\?aud=did/.test(raw.data.scope) && !/aud=\*/.test(raw.data.scope) && Object.keys(raw.data.permissionSets ?? {}).length === 0, raw.data.scope);
+check("consent page scope is one rpc permission bound to the club's PDS, no permission set", /^atproto rpc\?lxm=com\.atproto\.repo\.createRecord&lxm=com\.atproto\.server\.createDelegatedAccount&aud=did/.test(raw.data.scope) && !/aud=\*/.test(raw.data.scope) && Object.keys(raw.data.permissionSets ?? {}).length === 0, raw.data.scope);
 html = await text("/alice");
 check("signed in as an app for one host", /app for one host/.test(html));
 await post("/alice/write", { as: clubDid, what: "accept" });
@@ -284,6 +286,63 @@ flash = await post("/club/delegates/remove", { did: aliceDid });
 await post("/stock/write", { what: "accept" });
 html = strip(await text("/stock"));
 check("the stock client's next write is refused", /(401|no longer a delegate|invalid_token|session unusable)/i.test(html.split("What happened")[1] ?? ""), (html.split("What happened")[1] ?? "").slice(0, 160));
+
+// --- creating a community from an app -----------------------------------------------
+
+/** The whole sign-in-as sequence for a door, as a person: returns where the app callback lands. */
+async function signInAsDelegate(door, account, handle, accountDid) {
+  const start = await go(`${APP}/oauth/${door}/start`, { method: "POST", headers: form, body: new URLSearchParams({ who: account, as_delegate: "1" }) });
+  const delegatePage = start.headers.get("location") ?? "";
+  const pds = new URL(delegatePage).origin;
+  const rt = new URL(delegatePage).searchParams.get("return_to");
+  await go(delegatePage, { headers: browserNav });
+  const sub = await go(`${pds}/oauth/delegate`, { method: "POST", headers: form, body: new URLSearchParams({ account, handle, return_to: rt }) });
+  const nested = sub.headers.get("location") ?? "";
+  if (!nested.startsWith("http")) throw new Error(`sign-in-as ${account}: ${sub.status} ${(await sub.text()).replace(/<[^>]+>/g, " ").slice(0, 200)}`);
+  const own = await consent(nested, handle);
+  const cb = await go(own.loc);
+  if (cb.status !== 302) return { refused: `${cb.status} ${strip(await cb.text()).slice(0, 160)}` };
+  const fin = await go(cb.headers.get("location"));
+  const chosen = await chooseSession(fin.headers.get("location"), accountDid);
+  const appCb = await go(chosen.loc);
+  return { callbackTo: appCb.headers.get("location") };
+}
+
+step("12. alice creates a community from her app: no password, no email, she is its controller.");
+// Step 7 pointed alice's door at the club; sign her back in as herself, as an app for one host.
+await post("/alice/sign-out", {});
+const aliceBack = await signInAt("raw", "alice.test");
+check("alice is signed in to her app again", aliceBack.callbackTo === "/alice", `${aliceBack.status} → ${aliceBack.callbackTo}`);
+flash = await post("/alice/create", { handle: "riders.test", asDelegate: "1" });
+html = strip(await text("/alice"));
+check("createDelegatedAccount from alice's session → created", /200 created did:plc:[a-z0-9]+ as riders\.test; you are its controller/.test(html), `${flash} :: ${(html.split("What happened")[1] ?? html).slice(0, 220)}`);
+const ridersDid = html.match(/created (did:plc:[a-z0-9]+) as riders\.test/)?.[1];
+check("the page now offers riders to act as, created from this app", !!ridersDid && new RegExp(`value="${ridersDid}"`).test(await text("/alice")) && /created from this app/.test(await text("/alice")), ridersDid);
+await post("/alice/write", { as: ridersDid, what: "accept" });
+html = strip(await text("/alice"));
+check("alice, a delegate from creation, accepts a gallery as riders → 200", new RegExp(`200 committed as the club: at://${ridersDid}/social\\.grain\\.group\\.item/`).test(html));
+
+step("13. The founder opens the tool as riders: no password to type, she signs in as a controller.");
+await post("/club/sign-out", {});
+const founder = await signInAsDelegate("club", "riders.test", "alice.test", ridersDid);
+check("callback lands on /club", founder.callbackTo === "/club", JSON.stringify(founder));
+html = await text("/club");
+check("the tool holds a session as riders, acting alice, with account:delegates kept by the narrowing", html.includes(`Signed in as <code>${ridersDid}</code>`) && html.includes(`Acting:</b> <code>${aliceDid}</code>`) && /account:delegates/.test(html), strip(html).match(/Signed in as.*?Sign out/)?.[0]?.slice(0, 200));
+{
+  const controllersBox = html.match(/<textarea name="controllers"[^>]*>([^<]*)<\/textarea>/)?.[1] ?? "";
+  const delegatesTable = (html.split("<h2>Delegates</h2>")[1] ?? "").split("<h3>")[0];
+  check("alice is listed as the controller, and as a delegate", controllersBox.includes(aliceDid) && delegatesTable.includes(aliceDid), `controllers: ${controllersBox.trim().slice(0, 80)} | delegates: ${strip(delegatesTable).slice(0, 160)}`);
+}
+const bobDid = html.match(/<option value="(did:plc:[a-z0-9]+)">person bob<\/option>/)?.[1];
+flash = await post("/club/delegates/put", { did: bobDid, label: "bob", permissions: "repo:social.grain.group.item?action=create" });
+check("as a controller signed in as riders, alice adds bob as a delegate", /is a delegate/.test(flash), flash);
+
+step("14. bob, a delegate but not a controller, signs in to the tool as riders: the narrowing drops account:delegates and the tool is refused.");
+await post("/club/sign-out", {});
+const notController = await signInAsDelegate("club", "riders.test", "bob.test", ridersDid);
+check("bob's sign-in as riders completes (he is a delegate)", notController.callbackTo === "/club", JSON.stringify(notController));
+html = strip(await text("/club"));
+check("getDelegateConfig → 403 ScopeMissing: his session kept only atproto", /403 ScopeMissing/.test(html) && /Token scope: atproto\s/.test(html), html.match(/getDelegateConfig[^]{0,60}|Token scope: [^ ]+ ?[^ ]*/g)?.join(" | "));
 
 console.log(failures ? `\n${failures} check(s) failed.` : "\nAll checks passed.");
 process.exit(failures ? 1 : 0);

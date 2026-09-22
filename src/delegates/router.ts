@@ -15,9 +15,11 @@
 import express, { type Request, type Response, type Router } from "express";
 import type { AppContext } from "@atproto/pds";
 import { repoPrepare } from "@atproto/pds";
+import { Secp256k1Keypair, randomStr } from "@atproto/crypto";
 import { ScopeMissingError, ScopePermissions } from "@atproto/oauth-scopes";
 import { verifyJwt } from "@atproto/xrpc-server";
 import { parseCid } from "@atproto/lex-data";
+import * as plc from "@did-plc/lib";
 import type { DelegateResolver } from "./resolve.ts";
 import type { DelegateStore, Via } from "./store.ts";
 import { XrpcError, sendError, short } from "./xrpc-error.ts";
@@ -70,8 +72,8 @@ export function delegatesRouter(opts: Opts): Router {
   // either a service auth token (below) or the existing OAuth output whose
   // token is a delegated session.
 
-  /** Verify the delegate's service auth token for this method. RFC § Authentication. */
-  async function authenticateServiceAuth(req: Request, lxm: string, account: string): Promise<DelegateAuth> {
+  /** Verify a service auth token addressed to this PDS and bound to `lxm`; single use. Returns the issuer's DID. RFC § Authentication. */
+  async function verifyServiceAuth(req: Request, lxm: string): Promise<string> {
     const peek = peekJwt(req)!;
     const aud: string = peek.aud;
     if (aud !== serviceDid && aud !== `${serviceDid}#atproto_pds`) {
@@ -87,15 +89,20 @@ export function delegatesRouter(opts: Opts): Router {
       throw new XrpcError(401, err?.customErrorName ?? "InvalidToken", err?.message ?? "bad token");
     }
     if (typeof payload.jti !== "string") {
-      throw new XrpcError(401, "BadJwtJti", "a delegated write requires a jti");
+      throw new XrpcError(401, "BadJwtJti", "a delegated call requires a jti");
     }
     if (payload.exp - Math.floor(Date.now() / 1000) > 60) {
-      throw new XrpcError(401, "BadJwtExpiration", "a delegated write token may live at most 60 seconds");
+      throw new XrpcError(401, "BadJwtExpiration", "a delegated call's token may live at most 60 seconds");
     }
     if (!store.consumeJti(payload.jti, payload.exp)) {
       throw new XrpcError(401, "ReplayedToken", "this token has already been used");
     }
-    const delegate = payload.iss.split("#")[0]!;
+    return payload.iss.split("#")[0]!;
+  }
+
+  /** The delegate's service auth token for a write. */
+  async function authenticateServiceAuth(req: Request, lxm: string, account: string): Promise<DelegateAuth> {
+    const delegate = await verifyServiceAuth(req, lxm);
     if (delegate === account) {
       throw new XrpcError(400, "InvalidRequest", "a delegated write names another account as repo");
     }
@@ -254,15 +261,32 @@ export function delegatesRouter(opts: Opts): Router {
     })().catch((e) => sendError(res, e));
   });
 
-  // --- Management, by the account itself ------------------------------------
+  // --- Management -----------------------------------------------------------
   // Upstream: api/com/atproto/server/, next to createAppPassword.ts. RFC
-  // § Managing delegates: an OAuth session holding `account:delegates`, or a
-  // legacy full-access session. Never an app password, never a delegate.
+  // § Managing delegates. Three callers may manage an account's configuration:
+  //
+  //   the account itself   an OAuth session holding `account:delegates`, or a
+  //                        legacy full-access session
+  //   a controller, signed in as the account
+  //                        a delegated session whose scope kept
+  //                        `account:delegates` because its delegate is a controller
+  //   a controller, from their own session
+  //                        service auth signed as themselves, bound to the
+  //                        method, naming the account in `account`
+  //
+  // Never an app password, never a plain delegate.
 
-  async function accountOf(req: Request, res: Response): Promise<string> {
+  const ACCOUNT_DELEGATES = "this session lacks account:delegates?action=manage";
+
+  async function accountOf(req: Request, res: Response, lxm: string): Promise<string> {
     const p = peekJwt(req);
-    if (isDelegatedSessionShaped(p)) {
-      throw new XrpcError(403, "DelegateForbidden", "a delegated session cannot manage delegates");
+    if (isServiceAuthShaped(p)) {
+      const caller = await verifyServiceAuth(req, lxm);
+      const named = String((req.method === "GET" ? req.query.account : req.body?.account) ?? "");
+      if (!named) throw new XrpcError(400, "InvalidRequest", "a controller names the account in `account`");
+      const account = await ctx.authVerifier.findAccount(named as any, { checkDeactivated: true, checkTakedown: true });
+      if (!store.isController(account.did, caller)) throw new XrpcError(403, "NotController", `${caller} is not a controller of ${account.did}`);
+      return account.did;
     }
     const verify = ctx.authVerifier.authorization({
       scopes: ["com.atproto.access"] as any,
@@ -270,48 +294,152 @@ export function delegatesRouter(opts: Opts): Router {
         // `delegates` is the attribute the RFC adds; scripts/patch-account-delegates.mjs
         // teaches the installed scope parser about it.
         if (!permissions.allowsAccount({ attr: "delegates", action: "manage" })) {
-          throw new XrpcError(403, "ScopeMissing", "this session lacks account:delegates?action=manage");
+          throw new XrpcError(403, "ScopeMissing", ACCOUNT_DELEGATES);
         }
       },
     } as any);
     const out = await verify({ req, res, params: {} } as any);
     if (!("credentials" in out)) throw new XrpcError(out.status, out.error ?? "AuthRequired", out.message ?? "authentication required");
-    return out.credentials.did;
+    const did = out.credentials.did;
+    if (isDelegatedSessionShaped(p)) {
+      // The scope check above already passed, which for a delegated session
+      // means the narrowing kept `account:delegates`: only a controller's does.
+      const s = store.getSession(p!.jti);
+      if (!s || s.account !== did || !store.isController(did, s.delegate)) {
+        throw new XrpcError(403, "NotController", "a delegated session may manage delegates only for a controller");
+      }
+    }
+    return did;
   }
 
   const managed = (method: "get" | "post", lxm: string, handler: (account: string, req: Request) => Promise<unknown>) =>
     router[method](`/xrpc/${lxm}`, json, async (req, res) => {
       try {
-        const account = await accountOf(req, res);
+        const account = await accountOf(req, res, lxm);
         res.json(await handler(account, req));
       } catch (err) {
         sendError(res, err);
       }
     });
 
-  managed("get", "com.atproto.server.getDelegateConfig", async (account) => ({
-    ...store.getConfig(account),
-    delegates: store.listDelegates(account),
-  }));
-
-  managed("post", "com.atproto.server.updateDelegateConfig", async (account, req) => {
-    const { policy, managingApp } = req.body;
-    if (policy !== "delegate-list" && policy !== "managing-app") throw new XrpcError(400, "InvalidRequest", "policy must be delegate-list or managing-app");
-    if (policy === "managing-app" && typeof managingApp !== "string") throw new XrpcError(400, "InvalidRequest", "managing-app policy needs a managingApp");
-    store.setConfig(account, { policy, managingApp });
-    resolver.clearCache();
-    log(`  ${short(account)}: policy = ${policy}${managingApp ? ` (${managingApp})` : ""}`);
-    return store.getConfig(account);
-  });
-
-  managed("post", "com.atproto.server.putDelegate", async (account, req) => {
-    const { did, permissions, label, expiresAt } = req.body;
-    if (typeof did !== "string" || !did.startsWith("did:")) throw new XrpcError(400, "InvalidRequest", "did required");
-    if (did === account) throw new XrpcError(400, "InvalidRequest", "an account is not its own delegate");
+  const validatePermissions = (permissions: unknown): string[] => {
     if (!Array.isArray(permissions) || !permissions.every((p) => typeof p === "string")) throw new XrpcError(400, "InvalidRequest", "permissions must be strings");
     // Only repo:, space:, blob: are meaningful; nothing that reaches the account itself.
     const bad = permissions.find((p: string) => !/^(repo|space|blob):/.test(p));
     if (bad) throw new XrpcError(400, "InvalidPermission", `${bad}: a delegate may hold only repo:, space:, and blob: permissions`);
+    return permissions;
+  };
+  const validateDids = (dids: unknown, what: string): string[] => {
+    if (!Array.isArray(dids) || !dids.every((d) => typeof d === "string" && d.startsWith("did:"))) throw new XrpcError(400, "InvalidRequest", `${what} must be DIDs`);
+    return [...new Set(dids as string[])];
+  };
+
+  managed("get", "com.atproto.server.getDelegateConfig", async (account) => ({
+    ...store.getConfig(account),
+    controllers: store.listControllers(account),
+    delegates: store.listDelegates(account),
+  }));
+
+  managed("post", "com.atproto.server.updateDelegateConfig", async (account, req) => {
+    const { policy, managingApp, controllers } = req.body;
+    if (policy !== undefined) {
+      if (policy !== "delegate-list" && policy !== "managing-app") throw new XrpcError(400, "InvalidRequest", "policy must be delegate-list or managing-app");
+      if (policy === "managing-app" && typeof managingApp !== "string") throw new XrpcError(400, "InvalidRequest", "managing-app policy needs a managingApp");
+      store.setConfig(account, { policy, managingApp });
+      resolver.clearCache();
+      log(`  ${short(account)}: policy = ${policy}${managingApp ? ` (${managingApp})` : ""}`);
+    }
+    if (controllers !== undefined) {
+      const dids = validateDids(controllers, "controllers").filter((d) => d !== account);
+      store.setControllers(account, dids);
+      log(`  ${short(account)}: controllers = ${dids.map(short).join(", ") || "(none)"}`);
+    }
+    return { ...store.getConfig(account), controllers: store.listControllers(account) };
+  });
+
+  // --- Creating an account for a community, from an app ----------------------
+  // Upstream: a sibling of createAccount.ts sharing its DID and repo setup.
+  // The account gets no password and no email: nothing to share, nothing to
+  // phish. Its controllers manage it and its delegates write to it. The
+  // caller is the first controller, authenticated by service auth from their
+  // own PDS, so the app that creates the community holds nothing for it.
+  // Operator policy (invites, allowlists, rate limits) applies as for
+  // createAccount; the demo PDS requires no invite.
+  router.post("/xrpc/com.atproto.server.createDelegatedAccount", json, async (req, res) => {
+    try {
+      const lxm = "com.atproto.server.createDelegatedAccount";
+      if (!isServiceAuthShaped(peekJwt(req))) throw new XrpcError(401, "AuthRequired", "service auth from the first controller is required");
+      const caller = await verifyServiceAuth(req, lxm);
+      const { handle: rawHandle, controllers: rawControllers, delegates: rawDelegates, policy, managingApp, recoveryKey } = req.body ?? {};
+      const controllers = validateDids(rawControllers ?? [], "controllers");
+      if (!controllers.includes(caller)) throw new XrpcError(403, "NotController", "the caller must be among the controllers");
+      const delegates: { did: string; permissions: string[]; label?: string; expiresAt?: string }[] = (rawDelegates ?? []).map((d: any) => ({
+        did: validateDids([d?.did], "delegate did")[0]!,
+        permissions: validatePermissions(d?.permissions),
+        label: typeof d?.label === "string" ? d.label : undefined,
+        expiresAt: typeof d?.expiresAt === "string" ? d.expiresAt : undefined,
+      }));
+      if (policy !== undefined && policy !== "delegate-list" && policy !== "managing-app") throw new XrpcError(400, "InvalidRequest", "policy must be delegate-list or managing-app");
+      if (policy === "managing-app" && typeof managingApp !== "string") throw new XrpcError(400, "InvalidRequest", "managing-app policy needs a managingApp");
+      const handle = await ctx.accountManager.normalizeAndValidateHandle(String(rawHandle ?? ""));
+      if (await ctx.accountManager.getAccount(handle)) throw new XrpcError(400, "HandleNotAvailable", `Handle already taken: ${handle}`);
+
+      // From here, the stock createAccount handler's steps: a signing key, a
+      // PLC identity with the PDS's rotation key, an empty repo, the account
+      // registered, and the creation sequenced. The account gets an
+      // unguessable password that is discarded here and an email nobody
+      // reads: the PDS's OAuth machinery requires both to exist, and nothing
+      // else may ever use them.
+      const signingKey = await Secp256k1Keypair.create({ exportable: true });
+      const rotationKeys = [ctx.plcRotationKey.did()];
+      const recovery = (ctx.cfg as any).identity?.recoveryDidKey;
+      if (recovery) rotationKeys.unshift(recovery);
+      if (typeof recoveryKey === "string" && recoveryKey) rotationKeys.unshift(recoveryKey);
+      const { did, op } = await plc.createOp({
+        signingKey: signingKey.did(),
+        rotationKeys,
+        handle,
+        pds: (ctx.cfg as any).service.publicUrl,
+        signer: ctx.plcRotationKey,
+      });
+      await ctx.actorStore.create(did as any, signingKey);
+      try {
+        const commit = await ctx.actorStore.transact(did as any, (actorTxn) => actorTxn.repo.createRepo([]));
+        await ctx.plcClient.sendOperation(did, op);
+        try {
+          await ctx.accountManager.createAccount({
+            did: did as any,
+            handle,
+            email: `${did.replace(/:/g, "-")}@delegated.invalid`,
+            password: randomStr(48, "base32"),
+            repoCid: commit.cid,
+            repoRev: commit.rev,
+            deactivated: false,
+          } as any);
+          await ctx.sequencer.sequenceAccountCreation(did as any, handle, commit);
+        } catch (err) {
+          await ctx.plcClient.tombstone(did, ctx.plcRotationKey);
+          throw err;
+        }
+      } catch (err) {
+        await ctx.actorStore.destroy(did as any);
+        throw err;
+      }
+      store.setControllers(did, controllers);
+      if (policy) store.setConfig(did, { policy, managingApp });
+      for (const d of delegates) store.putDelegate(did, d);
+      log(`  created ${short(did)} (${handle}) for controller ${short(caller)}: ${controllers.length} controller(s), ${delegates.length} delegate(s)${policy ? `, policy ${policy}` : ""}`);
+      res.json({ did, handle });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  managed("post", "com.atproto.server.putDelegate", async (account, req) => {
+    const { did, label, expiresAt } = req.body;
+    if (typeof did !== "string" || !did.startsWith("did:")) throw new XrpcError(400, "InvalidRequest", "did required");
+    if (did === account) throw new XrpcError(400, "InvalidRequest", "an account is not its own delegate");
+    const permissions = validatePermissions(req.body.permissions);
     store.putDelegate(account, { did, permissions, label, expiresAt });
     log(`  ${short(account)}: delegate ${short(did)} = ${permissions.join(" ")}${label ? ` (${label})` : ""}`);
     return store.getDelegate(account, did);
