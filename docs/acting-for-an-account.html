@@ -31,6 +31,7 @@
   .fact .card { font-size: 1.1rem; }
   .arrows { text-align: center; font-size: 2rem; color: var(--accent); line-height: 1; margin: .2rem 0 .6rem; letter-spacing: 8rem; padding-left: 8rem; }
   table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+  table.wide { font-size: .88rem; }
   th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { background: #f2f3f6; font-weight: 600; }
   td.ok { color: var(--ok); font-weight: 600; } td.no { color: var(--no); font-weight: 600; }
@@ -49,8 +50,17 @@
   .scope .add { color: var(--accent); font-weight: 600; }
   .kbd { font-size: .8rem; color: var(--muted); }
   @media print {
-    html { scroll-snap-type: none; } body { background: #fff; }
-    .slide { min-height: 0; page-break-after: always; border: 0; padding: 1.5rem; }
+    @page { size: letter landscape; margin: 0.35in 0.45in; }
+    html { scroll-snap-type: none; } body { background: #fff; font-size: 12.5px; }
+    .slide { min-height: 0; height: 7.6in; overflow: hidden; break-after: page; border: 0; padding: .15in .2in; justify-content: flex-start; }
+    .slide h1 { font-size: 2rem; } .slide h2 { font-size: 1.45rem; margin-bottom: .6rem; } .slide h3 { font-size: 1rem; margin: .6rem 0 .3rem; }
+    .lead { font-size: 1rem; }
+    .cols { gap: .7rem; } .card { padding: .55rem .75rem; }
+    .seq { max-height: 4.7in; }
+    table { font-size: .78rem; } th, td { padding: .3rem .45rem; }
+    table.wide { font-size: .66rem; } table.wide th, table.wide td { padding: .2rem .3rem; }
+    .fact .card { font-size: .95rem; } .arrows { font-size: 1.4rem; margin: .1rem 0 .4rem; }
+    .scope { font-size: .8rem; padding: .4rem .6rem; }
     .num, .kbd { display: none; }
   }
 </style>
@@ -233,7 +243,7 @@ blob:image/*</div>
 
 <section class="slide">
   <h2>Side by side</h2>
-  <table style="font-size:.88rem">
+  <table class="wide">
     <tr><th></th><th>shared password /<br>app passwords</th><th>A · app holds<br>the session</th><th>B · delegated scopes<br>at the person's server</th><th>C · sign in as, at<br>the account's server</th><th>D · configuration<br>on the account</th></tr>
     <tr><th>where the policy lives</th><td>nowhere</td><td>in the app</td><td>the person's AS grants; the account's side unspecified</td><td>the account's AS, or a group host</td><td>the account's config; roles optionally in a managing app</td></tr>
     <tr><th>who authenticates</th><td>nobody in particular</td><td>the account, once</td><td>the person, at their PDS</td><td>the person, at their PDS, via the account's AS</td><td>the person, at their PDS</td></tr>
