@@ -1,0 +1,48 @@
+{
+  "lexicon": 1,
+  "id": "com.atproto.server.createDelegatedAccount",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Create an account that has no credentials of its own: no password, no email. It is managed by its controllers and written to by its delegates. Called with service auth by the first controller, from their own PDS.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["handle", "controllers"],
+          "properties": {
+            "handle": { "type": "string", "format": "handle" },
+            "controllers": {
+              "type": "array",
+              "items": { "type": "string", "format": "did" },
+              "description": "DIDs that may manage the account's delegate configuration. Must include the caller."
+            },
+            "delegates": {
+              "type": "array",
+              "items": { "type": "ref", "ref": "com.atproto.server.defs#delegate" }
+            },
+            "policy": { "type": "string", "knownValues": ["delegate-list", "managing-app"] },
+            "managingApp": { "type": "string" },
+            "recoveryKey": { "type": "string", "description": "A DID key added to the PLC rotation keys ahead of the PDS's own." }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["did", "handle"],
+          "properties": {
+            "did": { "type": "string", "format": "did" },
+            "handle": { "type": "string", "format": "handle" }
+          }
+        }
+      },
+      "errors": [
+        { "name": "HandleNotAvailable" },
+        { "name": "NotController", "description": "The caller is not among the controllers." },
+        { "name": "InvalidPermission" }
+      ]
+    }
+  }
+}

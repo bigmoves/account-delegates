@@ -6,21 +6,25 @@ Some atproto accounts are not people. A community, a brand, a newsroom, a bot fl
 
 The permissioned data proposal makes this sharper. A community is naturally a space authority: a DID with spaces under it, a host that decides who may read, and members whose records live in their own repos inside those spaces. Almost everything a community does fits that shape without the community itself ever writing anything. But a few things do not. Pinning a thread, accepting a submission into a pool, applying a label, publishing the community's own profile in an app: these are records the *community* has to author, and the person authoring them is a moderator who should never hold the community's keys.
 
-The obvious answer is to let a person sign in *as* the account. The account's OAuth authorization server, when an app signs in with the account's identifier, runs a nested login against the person's own PDS, looks up their standing, and narrows the grant to what that standing allows. This can be made to work end to end with no changes in the app. But it needs hooks in the OAuth provider, a second session in every app, a nested login on every sign-in, and above all it requires the account to live on a PDS whose authorization server has been taught the policy. A community run this way cannot be an ordinary account on an ordinary PDS.
+The established answer is to let a person sign in *as* the account. The account's OAuth authorization server, when an app signs in with the account's identifier, runs a nested login against the person's own PDS, looks up their standing, and narrows the grant to what that standing allows. Tranquil PDS runs this today for its delegated accounts, and it has the property that matters most: every existing client works, because the client only sees an ordinary login. Its cost is where the policy lives. The lookup is a hook inside the authorization server, so the account has to live on a PDS that implements those hooks, and the person carries a second session for every account they act for.
 
-This proposal takes the role lookup out of the authorization server and puts the *fact* it was looking up where it belongs: on the account. An account names its **delegates**, the DIDs that may write to it and how far. A delegate writes to the account by authenticating **as themselves**, with a service auth token from their own PDS, and naming the account as the `repo`. The account's PDS checks the delegation, bounds the write, commits it under the account's key, and remembers who asked. No new token class, no OAuth change, no second session, and the account can live anywhere.
+This proposal takes the role lookup out of the authorization server and puts the *fact* it was looking up where it belongs: on the account. An account names its **delegates**, the DIDs that may write to it and how far, as host state on whatever PDS it lives on. That one fact is then exercised two ways, and the account's PDS enforces the same bounds and keeps the same log for both:
+
+- **A delegated write.** A delegate writes to the account by authenticating **as themselves**, with a service auth token from their own PDS, and naming the account as the `repo`. The account's PDS checks the delegation, bounds the write, commits it under the account's key, and remembers who asked. No new token class, no OAuth change, no second session.
+- **Sign-in as the account.** A delegate signs in to any client as the account. The account's PDS authenticates them at their own PDS, asking for nothing but who they are, checks the delegate configuration, and lets the stock consent flow finish. The session it issues is the account's, narrowed to the delegate's permissions, and names the delegate in an `act` claim. No hooks, no knowledge of roles: the configuration is what the hooks were standing in for.
 
 ### Relationship to existing mechanisms
 
-| | Shared password / app passwords | Sign in as the account | Account delegates (this proposal) |
-|---|---|---|---|
-| Who authenticates | nobody in particular | the person, via a nested login at the account's AS | the person, at their own PDS |
-| What the app holds | a session for the account | a second session for the account | its ordinary session for the person |
-| Where the policy lives | nowhere | hooks inside the account's OAuth provider | the account's delegate config on its PDS |
-| Account can be on any PDS | yes | no | yes |
-| Attribution | none | `act` claim, host-side audit | recorded by the account's PDS per write |
-| Revocation | rotate the secret | revoke tokens | remove the delegate |
-| Protocol change | none | OAuth provider hooks | account config + one auth path on write methods |
+| | Shared password / app passwords | Sign in as the account, with hooks | Delegated write (this proposal) | Sign-in as, from the delegate config (this proposal) |
+|---|---|---|---|---|
+| Who authenticates | nobody in particular | the person, via a nested login at the account's AS | the person, at their own PDS | the person, at their own PDS, via a nested login at the account's AS |
+| What the app holds | a session for the account | a second session for the account | its ordinary session for the person | a session for the account, narrowed |
+| Where the policy lives | nowhere | hooks inside the account's OAuth provider | the account's delegate config on its PDS | the account's delegate config on its PDS |
+| Account can be on any PDS | yes | no | yes | yes |
+| Client must change | no | no | yes: address another `repo` | no |
+| Attribution | none | `act` claim, host-side audit | recorded by the account's PDS per write | `act` claim, and recorded per write |
+| Revocation | rotate the secret | revoke tokens | remove the delegate | remove the delegate; sessions end on their next request |
+| Protocol change | none | OAuth provider hooks | account config + one auth path on write methods | account config + one login method in the provider |
 
 ## Goals
 
@@ -29,7 +33,8 @@ This proposal takes the role lookup out of the authorization server and puts the
 - The account's PDS enforces the bounds itself, with the same permission matching it already applies to OAuth tokens.
 - Every delegated write is attributable to the delegate after the fact, and revocable by the account.
 - Both static lists and dynamic policy (a service that computes "who is a moderator right now") are supported, mirroring `simplespace`.
-- No change to the OAuth authorization server, the token format, the firehose, or the repo format.
+- A delegate can sign in to any existing client as the account, and the session they get is bounded by the same configuration and attributed to them.
+- No change to the OAuth protocol, the token format, the firehose, or the repo format. The authorization server gains one login method, not a policy.
 
 ## Non-goals
 
@@ -101,7 +106,25 @@ An account with no configuration behaves exactly as today. `policy` defaults to 
 
 ### Managing delegates
 
-Delegates are a credential-equivalent setting, like an app password. The management methods (below) require an OAuth session for the account itself holding the new `account:delegates` permission, or a legacy full-access session. They are never available through a delegated write, through an app password, or to a delegate. A delegate cannot add, change, or remove delegates, including their own entry.
+Delegates are a credential-equivalent setting, like an app password. The management methods (below) are never available through a delegated write, through an app password, or to a plain delegate. A delegate cannot add, change, or remove delegates, including their own entry. Three callers can:
+
+- **The account itself**, with an OAuth session holding the new `account:delegates` permission, or a legacy full-access session.
+- **A controller, signed in as the account.** The [narrowing](#sign-in-as-the-account) keeps `account:delegates` in a controller's session and in nobody else's, so the account's own settings tool works for a controller through a sign-in as the account.
+- **A controller, from their own session**, with a service auth token signed as themselves, bound to the management method, naming the account in an `account` parameter.
+
+### Controllers
+
+The configuration carries a list of **controllers**: DIDs that may manage it. A controller is not a delegate; a controller who should also write is listed as a delegate as well, with their own bounds. Controllers exist for accounts that have no credentials of their own, which is what an account created for a community from an app is (below): with no password anywhere, the controllers are the only way in. An account with a password keeps it as its root credential; controllers are in addition. Controllers may add and remove controllers. An account with a password may have none, and falls back to its password. An account with no credentials of its own MUST keep at least one controller: the PDS refuses to remove the last one, since nothing else could ever manage the account again. Its delegates would keep writing and its managing app would keep answering, but nobody could change either.
+
+### Creating an account for a community, from an app
+
+A community should be creatable from inside an app, by the person founding it, without that person leaving the app, and without the app holding anything for the community afterwards. `com.atproto.server.createDelegatedAccount` does that. The founder's app asks the founder's own PDS for a service auth token addressed to the PDS the community should live on and bound to the method, and calls it with a handle, the initial controllers (which MUST include the caller), any initial delegates, and optionally a policy and managing app.
+
+The PDS creates the account as `createAccount` would, except that the account gets no credentials of its own: no password anyone knows, and no email anyone reads. The PDS's OAuth machinery may require both to exist, in which case the PDS sets an unguessable password and discards it. It then records the controllers and delegates. The founder is the first controller; they may write as the account at once if they listed themselves as a delegate, and may open the account's settings by signing in as it. The app never sees a credential for the community, and if the app is later gone the community is unaffected.
+
+Operator policy applies as it does to `createAccount`: invite codes, allowlists, rate limits, and handle domains. A PDS MAY require that the caller's own account be on an allowlist of hosts. A recovery key MAY be given and lands ahead of the PDS's rotation key, as with `createAccount`, so that the founder holds a credible exit.
+
+This is the creation flow the "group host" design sketch describes, without the group host: the community's PDS is any PDS with this feature, and the app's relationship with it is an ordinary one.
 
 ### The `managing-app` policy
 
@@ -164,7 +187,9 @@ Every other method refuses a delegated caller, including all of `com.atproto.ser
 
 ### Attribution
 
-For every delegated write the PDS records the delegate's DID, the URI and CID written, the method, and the time. This is account state, exposed to the account through `listDelegatedWrites` and kept for as long as the PDS keeps its other per-account logs. It is not on the firehose and not in the commit.
+For every delegated write the PDS records the delegate's DID, the URI and CID written, the method, the time, and whether it arrived as a delegated write or through a delegated session. This is account state, exposed to the account through `listDelegatedWrites` and kept for as long as the PDS keeps its other per-account logs. It is not on the firehose and not in the commit.
+
+A delegated session also carries the delegate on the wire: the access token's `act.sub`, and the same field in `getSession`, so a client can show "posting as the club, acting: alice". A PDS SHOULD carry `act` into any inter-service token it mints from a delegated session, so a service the account calls can tell who was acting.
 
 A delegate is not a co-author. If an application wants a reader to see "accepted by alice", it defines that in its own record. What the protocol guarantees is that the account can always find out.
 
@@ -176,20 +201,22 @@ Repo write rate limits are keyed by the caller's DID today. For delegated writes
 
 An app acting for a delegate needs nothing new from the protocol; it needs to do two things it already knows how to do.
 
-**Request the permission.** At the person's PDS, the app asks for an `rpc:` permission covering the write methods at the account's PDS:
+**Request the permission.** At the person's PDS, the app asks for an `rpc:` permission covering the write methods at the account's PDS. The default, for an app that acts for accounts on one known host, names that host:
 
 ```
 rpc:com.atproto.repo.applyWrites?aud=did:web:pds.example#atproto_pds
 ```
 
-`aud=*` also works and is what a general-purpose client would request, since it cannot know in advance where the accounts its user is a delegate of are hosted. The consent screen today renders `rpc:` permissions as a generic "perform actions on your behalf at …". A permission set published under `com.atproto` would make this legible in one line:
+What the person consents to is then bounded to one server. A general-purpose client cannot know in advance where the accounts its user is a delegate of are hosted, and needs `aud=*`. That is an open audience, and the consent screen MUST say so rather than render it as a generic "perform actions on your behalf". A permission set published under `com.atproto` does that in one line, in its own words:
 
 ```
 com.atproto.repo.delegatedWrites
-  "Write to accounts that have made you a delegate"
+  "Write to any account that has made you a delegate, on any server"
   rpc: com.atproto.repo.{createRecord,putRecord,deleteRecord,applyWrites,uploadBlob}
        aud=*
 ```
+
+An app SHOULD ask for the audience-specific permission when it can, and for the set only when it cannot. Either way, what the account allows the delegate is the ceiling; the grant at the person's PDS cannot exceed it.
 
 Two constraints of permission sets as they stand shape this. An `include:` scope may carry an `aud`, but only a specific service, never `*`; so a set meant for general-purpose clients has to carry `aud=*` itself, and an app that only ever acts for one host asks for the raw `rpc:` permission with that host as `aud` instead. And a set may only include methods under its own NSID authority, so the `com.atproto.space.*` write methods need a sibling set, `com.atproto.space.delegatedWrites`, of the same shape.
 
@@ -197,9 +224,9 @@ Two constraints of permission sets as they stand shape this. An `include:` scope
 
 The app does not need to know why the user may write to that account, and does not learn it. A refusal is a `403` with a named error. The user experience is one login, one session, and a button that either works or says why not.
 
-### There is no sign-in as the account
+### The delegated write, from the person's side
 
-This is the point most worth being explicit about, because it is the opposite of how the shared-account problem is usually solved. A person never logs in as the community. The flow, from their side:
+A delegated write never involves logging in as the community. The flow, from their side:
 
 1. **Sign in as yourself, once.** Ordinary OAuth against your own PDS. Among the permissions the app requests is the delegated-writes set above. That is the only consent that ever happens.
 2. **Choose the account in the app.** "Acting as Peninsula Riders" is a mode the app shows, not a second session. Nothing about the person's session changes.
@@ -209,7 +236,28 @@ This is the point most worth being explicit about, because it is the opposite of
 
 The account's own credentials still exist, but they are the controller's root credential, like a PDS password: used to set the policy and edit the list, never to post.
 
-Compare a sign-in-as design, where the app signs in with the account's identifier, lands on the account's authorization server, and that server must authenticate the person and know their standing before it can issue a narrowed session. That is two logins, two sessions, and an authorization server that has to be taught the policy. Here there is one login, one session, and the policy is a fact on the account that a stock PDS reads. Apps that cannot address a `repo` other than the session's own are the case for [sign-in-as done generically](#future-work), on top of this primitive.
+This is the path for an app that wants one session and a "posting as" switch. An app that cannot address a `repo` other than its session's own, which is every client that exists today, uses the next one.
+
+## Sign-in as the account
+
+A delegate may sign in to a client *as* the account. The client does nothing special: it starts an ordinary OAuth authorization with the account's identifier and asks for whatever scopes it always asks for. The account's PDS, as authorization server, offers one more way to authenticate than a password: as a delegate.
+
+1. **The person names themselves.** On the account's sign-in screen they choose to sign in as a delegate and give their own handle.
+2. **The account's PDS authenticates them at their own PDS.** It runs a nested OAuth authorization against the person's PDS as a client, asking for `atproto` only. The person consents there to being identified, nothing more. The resulting token is used once, to confirm the `sub`, and discarded; the account's PDS keeps no credential of the person's.
+3. **The account's PDS checks the delegation.** The person MUST be a delegate of the account under its policy, exactly as for a delegated write. If not, the sign-in fails here and the client never sees a session.
+4. **The stock consent flow finishes.** The account's PDS binds the pending authorization request to the delegate and offers the account as signed in on this device. The consent screen is the account's own, listing the client's requested scopes. Consent is the account's to give, and the delegate gives it within the bounds the account set.
+5. **The session is the account's, narrowed.** The token's `sub` is the account. Its scope is the intersection of what the client requested with the delegate's permissions, so nothing outside `repo:`, `space:`, and `blob:` survives, and nothing the account did not allow the delegate. The token carries `act` with `sub` set to the delegate's DID, and `getSession` returns the same `act`.
+6. **Every write is bounded and logged.** The account's PDS applies the delegate's *current* permissions on each request, not the ones at issue, so a permission taken away is gone at once, and a delegate removed finds the session refused and unrefreshable. Each write is recorded in the account's log like a delegated write, marked as having come through a session.
+
+The person's own session at their PDS is untouched: not narrowed, not held, not linked. A delegate has no path from the session to the account itself: `com.atproto.server.*`, `com.atproto.identity.*`, and the delegate-management methods refuse a delegated session, whatever the client asked for.
+
+### What the authorization server needs
+
+No hooks and no knowledge of roles. The delegate configuration answers the one question a hook would have: is this person allowed, and how far. Concretely, the provider needs a login method that runs the nested authorization; a binding from the pending request to the delegate who authenticated for it; narrowing of the scope at token issue and at every read of the token; and the `act` claim. The device account created so the consent screen has a session to offer MUST be removed once consent is given, and MUST NOT be usable to authorize any other request; a browser that signed in as a delegate must not later authorize some other client as the account on its own.
+
+### Two paths, one fact
+
+Both paths read the same configuration, are bounded by the same matcher, and write to the same log. Which one a person uses is the client's choice, not the account's: a client that knows about delegates keeps the person in their own session and addresses the account as `repo`; a client that does not, or a person who wants the account's own sessions in the client they already use, signs in as the account. A community host that answers `checkDelegate` serves both without knowing which is in play.
 
 ### Discovery
 
@@ -240,7 +288,7 @@ The managing app is the only party that knows what a "moderator" is. It projects
 
 ## Lifecycle
 
-**Revocation.** Removing a delegate takes effect on the next write. Under `managing-app`, revocation is bounded by the cache lifetime the managing app itself chose. There are no long-lived tokens to hunt down, because there are no tokens: each delegated write carries a fresh 60-second service auth token.
+**Revocation.** Removing a delegate takes effect on the next write. Under `managing-app`, revocation is bounded by the cache lifetime the managing app itself chose. For delegated writes there are no long-lived tokens to hunt down, because there are no tokens: each write carries a fresh 60-second service auth token. A delegated session is a long-lived token, but it is re-checked against the configuration on every request, so removal ends it on its next use and a refresh does not revive it.
 
 **The account is deactivated or taken down.** Delegated writes are refused with the account's own status errors.
 
@@ -254,7 +302,9 @@ The managing app is the only party that knows what a "moderator" is. It projects
 
 **A delegate is bounded, not trusted.** A delegate's permissions are the ceiling on what a compromise of the delegate, their PDS, or any app they authorized can do to the account. The account's identity, email, password, and delegate list are never reachable. This is strictly better than an app password, which today is the tool people actually use for this job.
 
-**Confused deputy.** An app holding `rpc:…?aud=*` can write, on the user's behalf, to *any* account that has made them a delegate. The user consented to that at their PDS, but the consent screen should say it plainly, which is what the permission set above is for. Apps that only ever act for one host SHOULD request an `aud`-specific permission. The account's own permission bounds apply regardless of what the app was granted.
+**Confused deputy.** An app holding `rpc:…?aud=*` can write, on the user's behalf, to *any* account that has made them a delegate. The user consented to that at their PDS, and the consent screen MUST say it plainly, which is what the permission set's title is for. Apps that only ever act for one host MUST request an `aud`-specific permission, which is the default this proposal recommends. The account's own permission bounds apply regardless of what the app was granted. A delegated session has no such exposure: its consent is per account, on the account's PDS.
+
+**A delegated session is the account's session.** Everything that protects an OAuth session protects it: DPoP binding, the client's registration, the refresh token's rotation. What it adds is a ceiling the client cannot see past: the scope is narrowed to the delegate's permissions at issue and on every read, and the management, identity, and account surfaces refuse it. The device account created for the consent screen is bound to one request and removed at consent; a device that signed in as a delegate must never be able to authorize another client as the account on its own. The stock provider records consent per client for the account, so a controller who later signs in to the same client may not be asked again; a PDS SHOULD keep a delegate's consent apart from the account's.
 
 **Replay.** Service auth tokens are bearer tokens. The `jti` single-use requirement and the 60-second window limit a captured token to one write within a minute, and the reference PDS already has the machinery: the replay store it uses for DPoP proofs, and the single-use check it applies to permissioned-data delegation tokens.
 
@@ -285,11 +335,15 @@ All under `com.atproto.server`, alongside the app-password methods they resemble
 
 | Method | Served by | Type | Auth | Description |
 |---|---|---|---|---|
-| `getDelegateConfig` | PDS | query | OAuth `account:delegates` | The account's policy, managing app, and delegates. |
-| `updateDelegateConfig` | PDS | procedure | OAuth `account:delegates` | Set `policy` and `managingApp`. |
-| `putDelegate` | PDS | procedure | OAuth `account:delegates` | Add or replace a delegate entry. |
-| `removeDelegate` | PDS | procedure | OAuth `account:delegates` | Remove a delegate. |
-| `listDelegatedWrites` | PDS | query | OAuth `account:delegates` | The attribution log, newest first, with a cursor. |
+| `getDelegateConfig` | PDS | query | management (see above) | The account's policy, managing app, controllers, and delegates. |
+| `updateDelegateConfig` | PDS | procedure | management | Set `policy` and `managingApp`, and/or replace `controllers`. |
+| `putDelegate` | PDS | procedure | management | Add or replace a delegate entry. |
+| `removeDelegate` | PDS | procedure | management | Remove a delegate. |
+| `listDelegatedWrites` | PDS | query | management | The attribution log, newest first, with a cursor. Each entry says whether it came as a delegated write or through a delegated session. |
+| `listDelegatedSessions` | PDS | query | management | The delegated sessions that exist: delegate, client, and when. |
+| `createDelegatedAccount` | PDS | procedure | service auth from the first controller | Create an account with no credentials of its own, with its controllers and delegates. |
+
+"Management" is any of the three callers under [Managing delegates](#managing-delegates). A service-auth caller names the account in an `account` parameter; the others act on the session's own account.
 | `checkDelegate` | managing app | query | service auth from the account | Given `account` and `did`, the delegate's permissions and an optional `expiresAt`. |
 
 ### Lexicon sketches
@@ -362,7 +416,7 @@ All under `com.atproto.server`, alongside the app-password methods they resemble
 }
 ```
 
-`uploadBlob` gains an optional `repo` parameter (DID or handle) with the same semantics as on the record methods.
+`uploadBlob` gains an optional `repo` parameter (DID or handle) with the same semantics as on the record methods. `getSession`'s output gains an optional `act` object with a `sub` DID, present on a delegated session.
 
 ## Reference implementation notes
 
@@ -372,15 +426,21 @@ Against the `permissioned-data-alpha` branch of `bluesky-social/atproto` at `382
 - **Auth.** A `delegatedWrite` verifier in `auth-verifier.ts` that accepts either the existing `authorization()` output or a service auth token with `audience` checked against the PDS's own DID, `lxm` required, and `jti` consumed. `verifyServiceJwt` already resolves the issuer's `#atproto` key.
 - **Handlers.** The `did !== auth.credentials.did` checks in `repo/createRecord.ts`, `putRecord.ts`, `deleteRecord.ts`, `applyWrites.ts` and the `repo must match authenticated user` checks in `space/*.ts` and `space/util.ts` become one `assertRepoAccess(auth, repo, writes)` that, for a service-auth caller, loads the delegate's permissions and evaluates them with `@atproto/oauth-scopes`' `ScopePermissions`, the class the OAuth path already uses. `uploadBlob` learns the `repo` parameter.
 - **Managing app.** `simplespace/manager.ts` already implements the pattern of signing a call as the authority and caching a policy answer; `checkDelegate` follows it.
-- **Nothing** in `@atproto/oauth-provider`, `@atproto/oauth-provider-ui`, the token store, the repo format, or the sync protocol.
+- **Creation.** `createDelegatedAccount.ts` beside `createAccount.ts`, sharing its DID, PLC, and repo setup, with a `delegate_controller` table beside `delegate`.
+- **Sign-in as the account.** In `@atproto/oauth-provider`, one sign-in method beside the password one, which runs a nested authorization against the person's PDS and, on success, binds the request to the delegate. In the token manager, the scope passed to `buildTokenScope` is intersected with the delegate's permissions when the request is bound, and again in `loadTokenClaims` against the current configuration; `createAccessToken` adds `act`. In `@atproto/oauth-provider-ui`, one link on the sign-in form. The prototype does all of this through the provider's public hooks (`onAuthorized`, `onCreateToken`, `onSignedIn`) and two wrapped internals, with the nested-login pages as ordinary routes on the PDS.
+- **Nothing** in the OAuth protocol, the token format beyond one optional claim, the repo format, or the sync protocol.
 
 A community host built this way is a managing app that answers `checkDelegate` from its role records. It holds no keys and no credential for any community, and the community's account can live on any PDS.
 
 ## Future work
 
-**Sign-in-as, done generically.** An OAuth provider can be taught to let a person sign in as an account by consulting domain-specific hooks. With delegates on the account, a provider could offer the same thing with *no* hooks: when a client asks to sign in as account X and the person authenticating is a delegate of X, issue a token for X narrowed to their delegate permissions, with `act.sub` set. The delegate configuration is exactly the policy those hooks were standing in for. This would give apps that must never learn about delegation a session-shaped alternative, on top of the same primitive.
+**`act` in inter-service tokens.** A delegated session that calls an AppView or a feed generator through the account's PDS gets a service auth token signed as the account. Carrying `act` into that token lets the service tell who was acting, which is what Tranquil is adding to its inter-service tokens. Which services would read it, and how they would show it, is a question for those services.
+
+**Transitional scopes.** A delegated session drops `transition:*` along with everything else outside `repo:`, `blob:`, and `space:`. A client that only asks for transitional scopes therefore cannot operate one. Whether `transition:generic` should map to a delegate's `repo:` and `blob:` permissions, so that such clients work in the meantime, is a judgment about how long the transition lasts.
 
 **Permission sets in delegate entries.** A managing app projecting "moderator" onto twenty permission strings would rather name one set. Sets today are scoped to their publisher's NSID authority, which is the wrong boundary here; whether to relax that for delegate entries, or to define a role-shaped set type, is open.
+
+**An audience-specific `rpc:` permission in a delegate entry.** A delegate is bounded to writes, and a delegated session drops every `rpc:` scope, so a client holding a session as the account cannot call any service as the account. A community host with its own API is the case that might want otherwise: a delegate entry could carry `rpc:…?aud=did:web:host.example#community`, naming one service, and the narrowing could keep the matching request. It is a bounded exception, not `rpc:*`, and it would bring `act` into the service auth tokens the session mints. Left out until a real client needs it; the person calling the host as themselves, with the host checking their role, covers the known cases.
 
 **Client restriction.** A delegate entry could name the apps (`client_id`) through which it may be exercised, enforced via a client attestation as spaces do with `appAccess`. Left out to keep the first version small.
 
@@ -390,4 +450,5 @@ A community host built this way is a managing app that answers `checkDelegate` f
 - Should `checkDelegate` receive the intended collection and action, so a managing app can answer narrowly per write rather than return a delegate's whole ceiling? The whole-ceiling answer caches better and mirrors how OAuth grants work; the per-write answer leaks less.
 - Should delegated writes be marked in the account's repo at all, for example as an optional commit field that relays ignore? This proposal says no, on the grounds that the account chose to let this happen and readers should not have to reason about it. It is the question most likely to come back.
 - Whether `getDelegationToken` belongs on the delegated surface, or whether communities should simply keep the records their moderators need to read in a space those moderators are members of.
-- Delegate-side discovery. A person can learn whether a given account names them by reading that account's permissioned space, but has no protocol-level way to enumerate the accounts that do; see [Discovery](#discovery). Whether general-purpose clients need the enumeration, and what would provide it without fan-out, is open.
+- Delegate-side discovery. A person can learn whether a given account names them by reading that account's permissioned space, but has no protocol-level way to enumerate the accounts that do; see [Discovery](#discovery). Whether general-purpose clients need the enumeration, and what would provide it without fan-out, is open. Sign-in as the account sidesteps it for the person, who types the account's name, but not for a client that wants to offer a list.
+- Whether the sign-in-as method should be reachable from the stock sign-in screen of every PDS, or only advertised by PDSes that host delegated accounts. The prototype adds one link to the form; a PDS with no delegates configured could hide it.

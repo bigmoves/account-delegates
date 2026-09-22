@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acting for an account: an exploration</title>
+<style>
+  :root {
+    --ink: #1c1c1c; --muted: #666; --line: #d9dce3; --paper: #fff;
+    --accent: #2f5fd1; --accent-soft: #eef2fb; --ok: #177a2b; --ok-soft: #e8f5ea;
+    --no: #b3261e; --no-soft: #fbeae8; --warn-soft: #fff7d6;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-snap-type: y proximity; }
+  body { margin: 0; font: 18px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: #f7f7f8; }
+  code { font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; background: #eef0f4; padding: 0 .3em; border-radius: 3px; }
+  .slide { min-height: 100vh; scroll-snap-align: start; padding: 4vh 6vw; display: flex; flex-direction: column; justify-content: center; background: var(--paper); border-bottom: 1px solid var(--line); position: relative; }
+  .slide h1 { font-size: 2.6rem; margin: 0 0 .5rem; letter-spacing: -.01em; }
+  .slide h2 { font-size: 2rem; margin: 0 0 1.2rem; letter-spacing: -.01em; }
+  .slide h3 { font-size: 1.15rem; margin: 1.2rem 0 .4rem; }
+  .lead { font-size: 1.25rem; max-width: 60ch; }
+  .muted { color: var(--muted); }
+  .num { position: absolute; right: 2rem; bottom: 1.2rem; color: var(--muted); font-size: .85rem; }
+  .cols { display: grid; gap: 1.5rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.2rem; background: #fff; }
+  .card h3 { margin-top: 0; }
+  .card.accent { background: var(--accent-soft); border-color: #b9c8ee; }
+  .card.ok { background: var(--ok-soft); border-color: #b7dcbd; }
+  .card.no { background: var(--no-soft); border-color: #eab8b3; }
+  .fact { text-align: center; margin: 0 auto 1.2rem; max-width: 46rem; }
+  .fact .card { font-size: 1.1rem; }
+  .arrows { text-align: center; font-size: 2rem; color: var(--accent); line-height: 1; margin: .2rem 0 .6rem; letter-spacing: 8rem; padding-left: 8rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+  table.wide { font-size: .88rem; }
+  th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #f2f3f6; font-weight: 600; }
+  td.ok { color: var(--ok); font-weight: 600; } td.no { color: var(--no); font-weight: 600; }
+  td.hl, th.hl { background: var(--accent-soft); }
+  ul { margin: .4rem 0; padding-left: 1.2rem; } li { margin: .25rem 0; }
+  .seq { width: 100%; max-width: 1200px; max-height: 66vh; margin: 0 auto; display: block; }
+  .seq text { font-family: system-ui, sans-serif; }
+  .legend { display: flex; gap: 1.5rem; flex-wrap: wrap; font-size: .9rem; color: var(--muted); margin-top: .6rem; }
+  .legend span::before { content: ""; display: inline-block; width: 28px; height: 0; border-top: 2px solid var(--accent); margin-right: .4rem; vertical-align: middle; }
+  .legend span.ret::before { border-top-style: dashed; }
+  .legend span.self::before { border: 1px solid #b9c8ee; background: var(--accent-soft); height: 12px; }
+  .legend span.no::before { border-top-color: var(--no); }
+  .scope { font: 1rem ui-monospace, Menlo, monospace; background: #eef0f4; padding: .6rem .8rem; border-radius: 6px; white-space: pre-wrap; margin: .3rem 0 .8rem; }
+  .scope .drop { color: var(--no); text-decoration: line-through; }
+  .scope .keep { color: var(--ok); font-weight: 600; }
+  .scope .add { color: var(--accent); font-weight: 600; }
+  .kbd { font-size: .8rem; color: var(--muted); }
+  @media print {
+    @page { size: letter landscape; margin: 0.35in 0.45in; }
+    html { scroll-snap-type: none; } body { background: #fff; font-size: 12.5px; }
+    .slide { min-height: 0; height: 7.6in; overflow: hidden; break-after: page; border: 0; padding: .15in .2in; justify-content: flex-start; }
+    .slide h1 { font-size: 2rem; } .slide h2 { font-size: 1.45rem; margin-bottom: .6rem; } .slide h3 { font-size: 1rem; margin: .6rem 0 .3rem; }
+    .lead { font-size: 1rem; }
+    .cols { gap: .7rem; } .card { padding: .55rem .75rem; }
+    .seq { max-height: 4.7in; }
+    table { font-size: .78rem; } th, td { padding: .3rem .45rem; }
+    table.wide { font-size: .66rem; } table.wide th, table.wide td { padding: .2rem .3rem; }
+    .fact .card { font-size: .95rem; } .arrows { font-size: 1.4rem; margin: .1rem 0 .4rem; }
+    .scope { font-size: .8rem; padding: .4rem .6rem; }
+    .num, .kbd { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<section class="slide">
+  <h1>Acting for an account</h1>
+  <p class="lead">An exploration of the ways several people could act as one atproto account, without sharing its secret. A community, a brand, a newsroom, a band: one DID, one repo, and moderators or staff who legitimately write to it.</p>
+  <div class="cols" style="margin-top:1.5rem">
+    <div class="card"><h3>Where things stand</h3>A shared password, or app passwords handed around. Every write looks the same on the wire. Nobody can be removed without rotating the secret. Nothing records who did what.</div>
+    <div class="card accent"><h3>The options</h3>Several ways to do this have been proposed. Each is set out on the same axes, with a diagram, what it keeps, and what it costs.</div>
+  </div>
+  </section>
+
+<section class="slide">
+  <h2>What discussion has surfaced</h2>
+  <div class="cols">
+    <div class="card"><h3>Ideas</h3>
+      <ul>
+        <li><b>The app holds the account's session.</b> The community signs in to the app once; the app decides which of its users may use that session.</li>
+        <li><b>Delegated scopes at the person's own server.</b> A person's authorization server grants an app the right to act for other accounts, as new scopes.</li>
+        <li><b>Sign in as the account.</b> The account's server authenticates the person at <i>their</i> server, checks their standing, and issues the account's session, narrowed.</li>
+        <li><b>A group host.</b> A dedicated service that is the PDS, the authorization server, and the roles for community accounts, with an admin API for apps.</li>
+        <li><b>Configuration on the account.</b> The account names who may act for it; its own PDS enforces that on writes, on sign-in, and at creation.</li>
+      </ul>
+    </div>
+    <div class="card"><h3>Questions and concerns</h3>
+      <ul>
+        <li><b>Consent has to be legible.</b> What does the person see, and does it name an audience? An open audience is a different decision for five friends than for a community of thousands.</li>
+        <li><b>Delegate writes, not everything.</b> Identity, account, and general calls are the dangerous parts; repo, space, and blob writes are the need.</li>
+        <li><b>Protocol changes are expensive.</b> A new delegated-auth mechanism is months of work; a chain-of-delegation token format may be the long-term answer.</li>
+        <li><b>Existing clients should keep working.</b> A moderator should not need a special app.</li>
+        <li><b>Standing should travel with the person</b>, not be locked inside one app.</li>
+        <li><b>Who holds the credential?</b> An app, a host, or nobody.</li>
+        <li><b>Attribution and revocation.</b> Who did this, and how fast can they be stopped.</li>
+        <li><b>Portability.</b> Can a community move, and does its arrangement move with it?</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The axes</h2>
+  <table>
+    <tr><th style="width:24%">Where does the policy live?</th><td>In the app · in the authorization server of the account · in a dedicated host · on the account, as host state any PDS can read</td></tr>
+    <tr><th>Who authenticates, and where?</th><td>Nobody in particular · the person at their own PDS · the person at the account's server</td></tr>
+    <tr><th>What does the client hold?</th><td>The account's session · the person's session · a narrowed session for the account</td></tr>
+    <tr><th>Where is consent shown, and to whom?</th><td>At the person's server (an audience question) · at the account's server, per account · nowhere</td></tr>
+    <tr><th>What can be delegated?</th><td>Everything · presets · writes only</td></tr>
+    <tr><th>Attribution and revocation</th><td>On the wire, in a log, inside one app, or not at all · immediate, next request, or rotate a secret</td></tr>
+    <tr><th>Can the account live anywhere, and move?</th><td>Any PDS · only a server that implements the mechanism · only a dedicated host</td></tr>
+    <tr><th>What has to change?</th><td>Nothing · the app · a server implementation · the reference PDS · the protocol</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>A · The app holds the account's session</h2>
+  <svg class="seq" id="seq-app"></svg>
+  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the app does</span></div>
+  <div class="cols" style="margin-top:.8rem">
+    <div class="card ok"><h3>Keeps</h3>Nothing changes anywhere. Plain OAuth, one consent, honest about who granted what to whom: the account authorized the app. Works today with any PDS.</div>
+    <div class="card no"><h3>Costs</h3>The app holds a credential for the account, with the app's scopes, not any one person's. Roles live inside the app and do not travel. Attribution exists only in the app's own records. Each app must be authorized separately by someone with the account's credentials.</div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>B · Delegated scopes at the person's own server</h2>
+  <svg class="seq" id="seq-scopes"></svg>
+  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what a server does</span></div>
+  <div class="cols" style="margin-top:.8rem">
+    <div class="card ok"><h3>Keeps</h3>Standing travels with the person: one login, one session, and the app acts for whichever accounts allow it. A simple consent screen if the audience is left open.</div>
+    <div class="card no"><h3>Costs</h3>A new protocol mechanism: a token that carries a delegation the account's PDS must verify, which is the kind of change that takes months and several implementations. Consent needs an audience picker the app cannot fill in. The account's own side, who allowed this person, still has to live somewhere.</div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>C · Sign in as the account, at its own server</h2>
+  <svg class="seq" id="seq-host"></svg>
+  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the server does</span></div>
+  <div class="cols" style="margin-top:.8rem">
+    <div class="card ok"><h3>Keeps</h3>Every existing OAuth client works, because it only sees an ordinary login. Consent is per account, at the account's server, with the client's own scopes. No protocol work. Runs today wherever the server implements it.</div>
+    <div class="card no"><h3>Costs</h3>The account must live on a server that implements the mechanism. Roles, the login method, the narrowing, and the log are that server's own, with no shared representation, so moving the account leaves its arrangement behind.</div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>C · How the account comes to exist</h2>
+  <svg class="seq" id="seq-host-create"></svg>
+  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the server does</span></div>
+  <div class="cols" style="margin-top:.8rem">
+    <div class="card ok"><h3>Keeps</h3>Two forms, both without protocol work. A person who already has an account on that server creates the community there and names its controllers. Or a dedicated group host offers apps an admin API, so a community is created from inside an app without the founder leaving it.</div>
+    <div class="card no"><h3>Costs</h3>The founder must have an account on that server, or the app must have a relationship with that host. In the admin-API form the app receives and keeps a session for the community, with the app's scopes rather than any one person's. Either way the community is born on that server and stays there.</div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>D · Configuration on the account</h2>
+  <div class="fact">
+    <div class="card accent">
+      <b>Host state on whatever PDS the account lives on.</b> Like app passwords or preferences: not in the repo, not on the firehose.
+      <table style="margin-top:.8rem;font-size:.95rem">
+        <tr><th style="width:11rem">controllers</th><td>DIDs that may manage this configuration. Not delegates.</td></tr>
+        <tr><th>delegates</th><td>DIDs that may write, each with permissions in auth-scope syntax: <code>repo:</code>, <code>space:</code>, <code>blob:</code> only. Never <code>rpc:</code>, <code>identity:</code>, <code>account:</code>.</td></tr>
+        <tr><th>policy</th><td><b>delegate-list</b>: the list above. <b>managing-app</b>: ask a named service (a community host) <code>checkDelegate(account, did)</code>, signed as the account, and cache its answer.</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="arrows">↓ ↓ ↓</div>
+  <div class="cols">
+    <div class="card"><h3>D1 · Delegated write</h3>The person's own app, their own session. A service auth token from their PDS, <code>repo</code> set to the account. One login; the client must know how to address another account.</div>
+    <div class="card"><h3>D2 · Sign in as the account</h3>Option C's flow, with the policy read from the configuration instead of hooks. Any OAuth client, unchanged; the session narrowed, with <code>act.sub</code>.</div>
+    <div class="card"><h3>D3 · Create from an app</h3>The founder's app creates the account on any PDS with the founder's own service auth. No usable credentials; the founder is a controller. The app holds nothing.</div>
+  </div>
+  <p class="muted" style="text-align:center;margin-top:1rem">Same bounds, same matcher the PDS already uses for OAuth scopes, same per-write log for all three.</p>
+</section>
+
+<section class="slide">
+  <h2>D1 · Delegated write</h2>
+  <svg class="seq" id="seq-write"></svg>
+  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the PDS does</span><span class="no">refusal</span></div>
+  <p class="muted">The app needs one thing from the person's PDS: an <code>rpc:</code> permission to mint service auth for the account's PDS. Naming that PDS as the audience keeps the consent bounded; a general-purpose client has to ask for an open audience, and the consent should say so in words.</p>
+</section>
+
+<section class="slide">
+  <h2>D2 · Sign in as the account</h2>
+  <svg class="seq" id="seq-signin"></svg>
+  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the PDS does</span></div>
+  <p class="muted">The same shape as option C. The difference is where the answer to "may this person act, and how far" comes from: the account's configuration, which any PDS could read, rather than the server's own hooks and roles.</p>
+</section>
+
+<section class="slide">
+  <h2>D2 · What a narrowed session gets</h2>
+  <div class="cols">
+    <div class="card">
+      <h3>The client asked for</h3>
+      <div class="scope">atproto
+repo:social.grain.group.item
+repo:app.bsky.feed.post?action=create
+blob:image/*</div>
+      <h3>The account allows alice</h3>
+      <div class="scope">repo:social.grain.group.item?action=create&amp;action=delete</div>
+    </div>
+    <div class="card ok">
+      <h3>The token alice gets, as the account</h3>
+      <div class="scope"><span class="keep">atproto</span>
+<span class="keep">repo:social.grain.group.item?action=create&amp;action=delete</span>
+<span class="drop">repo:app.bsky.feed.post?action=create</span>
+<span class="drop">blob:image/*</span>
+<span class="add">act: { sub: did:plc:alice }</span></div>
+      <p style="margin:.4rem 0 0">The intersection, applied at issue and again on every request against the account's <i>current</i> configuration. Remove alice and the session is refused on its next use and cannot be refreshed.</p>
+      <p style="margin:.4rem 0 0">A <b>controller</b> additionally keeps <code>account:delegates?action=manage</code>, so the account's settings tool works for them. Nobody else's session keeps any <code>account:</code>, <code>identity:</code>, or <code>rpc:</code> scope.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>D3 · Create a community from an app</h2>
+  <svg class="seq" id="seq-create"></svg>
+  <div class="legend"><span>call</span><span class="ret">reply</span><span class="self">what the PDS does</span></div>
+  <p class="muted">Same steps as <code>createAccount</code>, minus credentials anyone could use. Operator policy (invites, allowlists, rate limits) applies as it does there. An account with no credentials of its own must keep at least one controller.</p>
+</section>
+
+<section class="slide">
+  <h2>D · Who may do what</h2>
+  <table>
+    <tr><th style="width:26%"></th><th>the account's own password<br><span class="muted" style="font-weight:400">if it has one</span></th><th class="hl">a controller</th><th class="hl">a delegate</th><th>anyone else</th></tr>
+    <tr><th>write as the account</th><td class="ok">yes</td><td class="hl">only if also a delegate</td><td class="ok hl">yes, within their permissions</td><td class="no">NotDelegate</td></tr>
+    <tr><th>sign in to a client as the account</th><td class="ok">yes, full scope</td><td class="ok hl">yes: writes per their delegate entry + <code>account:delegates</code></td><td class="ok hl">yes: writes only, narrowed</td><td class="no">refused at sign-in</td></tr>
+    <tr><th>manage delegates and controllers</th><td class="ok">yes</td><td class="ok hl">yes: signed in as the account, or by service auth from their own session</td><td class="no hl">NotController</td><td class="no">no</td></tr>
+    <tr><th>create the account</th><td>n/a</td><td class="ok hl">the first controller, by service auth</td><td class="hl">no</td><td class="no">no</td></tr>
+    <tr><th>reach identity, email, password, keys</th><td class="ok">yes</td><td class="no hl">never</td><td class="no hl">never</td><td class="no">never</td></tr>
+    <tr><th>be removed, effect</th><td>rotate</td><td class="hl">next request</td><td class="hl">next write, or next request of a session</td><td></td></tr>
+  </table>
+  <div class="cols" style="margin-top:1rem">
+    <div class="card ok"><h3>Keeps</h3>The account can live on any PDS and move with its arrangement. One session or any client, the person's choice. Writes only. Attribution on the wire and in a log; revocation on the next request. No credential held by any app or host.</div>
+    <div class="card no"><h3>Costs</h3>The reference PDS changes: a configuration, one auth path on writes, one login method, one claim, and a creation method. It is not deployable by one operator alone if the goal is "any PDS". For general-purpose clients on D1, the consent at the person's server is still an open audience.</div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Side by side</h2>
+  <table class="wide">
+    <tr><th></th><th>shared password /<br>app passwords</th><th>A · app holds<br>the session</th><th>B · delegated scopes<br>at the person's server</th><th>C · sign in as, at<br>the account's server</th><th>D · configuration<br>on the account</th></tr>
+    <tr><th>where the policy lives</th><td>nowhere</td><td>in the app</td><td>the person's AS grants; the account's side unspecified</td><td>the account's AS, or a group host</td><td>the account's config; roles optionally in a managing app</td></tr>
+    <tr><th>who authenticates</th><td>nobody in particular</td><td>the account, once</td><td>the person, at their PDS</td><td>the person, at their PDS, via the account's AS</td><td>the person, at their PDS</td></tr>
+    <tr><th>the account can live on any PDS</th><td class="ok">yes</td><td class="ok">yes</td><td class="ok">yes</td><td class="no">no</td><td class="ok">yes</td></tr>
+    <tr><th>existing OAuth clients work unchanged</th><td>n/a</td><td>the one app</td><td class="no">no</td><td class="ok">yes</td><td class="ok">yes (D2); D1 needs the client to know</td></tr>
+    <tr><th>consent shown where</th><td>none</td><td>account's AS, once, to the app</td><td>person's AS; audience open or picked</td><td>account's AS, per account</td><td>account's PDS per account (D2); person's PDS, audience-specific or open (D1)</td></tr>
+    <tr><th>what may be delegated</th><td>everything</td><td>the app's scopes</td><td>as proposed: repo, space, blob; others debated</td><td>presets, up to everything</td><td>writes only</td></tr>
+    <tr><th>attribution</th><td class="no">none</td><td>in the app</td><td>in the token chain</td><td><code>act</code>, host log</td><td><code>act</code> + a per-write log</td></tr>
+    <tr><th>revocation</th><td>rotate</td><td>the app's, or revoke the app</td><td>revoke the grant</td><td>revoke sessions</td><td>next request</td></tr>
+    <tr><th>arrangement moves with the account</th><td>n/a</td><td class="no">no</td><td>with the person</td><td class="no">no</td><td class="ok">yes, as host state</td></tr>
+    <tr><th>how the account is created</th><td>ordinary createAccount; someone keeps the password</td><td>the same; then an admin connects it to the app</td><td>the same; unspecified beyond that</td><td>by a person with an account on that server, or by an app through a host's admin API</td><td>by the founder's own service auth, on any PDS; no credentials, controllers instead</td></tr>
+    <tr><th>what changes</th><td>nothing</td><td>nothing</td><td>the protocol: a new token mechanism</td><td>a server implementation, or a new service</td><td>the reference PDS</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Open questions</h2>
+  <div class="card" style="max-width:56rem">
+    <ul style="font-size:1.1rem">
+      <li><b>Discovery.</b> How a person's client learns which accounts they may act for, without every PDS notifying every other. Every option shares this.</li>
+      <li><b>The open audience.</b> Whether a general-purpose client's consent at the person's server can be made legible, or whether per-account consent at the account's server is the only honest form.</li>
+      <li><b>Calling out as the account.</b> Whether a session as the account should ever be able to call a named service as the account, and how narrowly.</li>
+      <li><b>Portability.</b> Whether the arrangement (who may act, and how far) should be a defined piece of host state that migrates, whichever option produces it.</li>
+      <li><b>Consent records.</b> Keeping a delegate's consent to a client apart from the account's own.</li>
+      <li><b>Operator policy on creation.</b> Who may create accounts this way, and how many.</li>
+      <li><b>The long view.</b> Whether a chain-of-delegation token format eventually replaces any of this, and what should be built in the meantime.</li>
+    </ul>
+  </div>
+</section>
+
+<script>
+// A small sequence-diagram renderer: participants become lanes, steps become
+// arrows, self-boxes, or notes. No dependencies, so this file stands alone.
+function seq(id, spec) {
+  const svg = document.getElementById(id);
+  const P = spec.participants, n = P.length;
+  const colW = spec.colW ?? 250, left = 20, headH = 48, top = 16, gap = 14, lineH = 18;
+  const W = left * 2 + colW * n;
+  const x = (i) => left + colW * i + colW / 2;
+  const el = (tag, attrs, text) => { const e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+  const lines = (t) => Array.isArray(t) ? t : [t];
+  // Approximate text width at 13px; boxes are sized from it and the canvas widened to fit.
+  const tw = (ls) => Math.max(...ls.map((t) => t.length)) * 6.6 + 22;
+  let maxRight = W - left;
+  const g = el("g", {});
+  let y = top + headH + 24;
+  for (const s of spec.steps) {
+    const ls = lines(s.text);
+    if (s.kind === "self" || s.kind === "note") {
+      const i0 = P.findIndex((p) => p.id === s.at), i1 = s.to != null ? P.findIndex((p) => p.id === s.to) : i0;
+      let bw, bx;
+      if (s.kind === "note") {
+        bw = Math.max(tw(ls), (Math.abs(i1 - i0) + 1) * colW - 32);
+        bx = Math.max(10, (x(i0) + x(i1)) / 2 - bw / 2);
+      } else {
+        bw = tw(ls);
+        // To the right of the lane, unless it is the last lane: then to the left.
+        bx = i0 === n - 1 ? x(i0) - 8 - bw : x(i0) + 8;
+      }
+      maxRight = Math.max(maxRight, bx + bw);
+      const h = ls.length * lineH + 12;
+      const fill = s.kind === "note" ? (s.tone === "no" ? "#fbeae8" : "#fff7d6") : "#eef2fb";
+      const stroke = s.kind === "note" ? (s.tone === "no" ? "#eab8b3" : "#f0d97a") : "#b9c8ee";
+      g.appendChild(el("rect", { x: bx, y, width: bw, height: h, rx: 6, fill, stroke }));
+      ls.forEach((t, k) => g.appendChild(el("text", { x: bx + 10, y: y + 18 + k * lineH, "font-size": 13, fill: s.tone === "no" ? "#b3261e" : "#1c1c1c" }, t)));
+      y += h + gap;
+      continue;
+    }
+    const i0 = P.findIndex((p) => p.id === s.from), i1 = P.findIndex((p) => p.id === s.to);
+    const x0 = x(i0), x1 = x(i1), dir = x1 > x0 ? 1 : -1;
+    const th = ls.length * lineH;
+    maxRight = Math.max(maxRight, (x0 + x1) / 2 + tw(ls) / 2);
+    ls.forEach((t, k) => g.appendChild(el("text", { x: (x0 + x1) / 2, y: y + k * lineH + 12, "text-anchor": "middle", "font-size": 13, fill: s.tone === "no" ? "#b3261e" : "#1c1c1c", "font-weight": k === 0 ? 600 : 400 }, t)));
+    const ay = y + th + 6;
+    const color = s.tone === "no" ? "#b3261e" : "#2f5fd1";
+    g.appendChild(el("line", { x1: x0, y1: ay, x2: x1 - dir * 8, y2: ay, stroke: color, "stroke-width": 2, "stroke-dasharray": s.kind === "return" ? "6 5" : "none" }));
+    g.appendChild(el("polygon", { points: `${x1},${ay} ${x1 - dir * 10},${ay - 5} ${x1 - dir * 10},${ay + 5}`, fill: color }));
+    y += th + 6 + gap + 4;
+  }
+  const H = y + 10;
+  svg.setAttribute("viewBox", `0 0 ${Math.max(W, maxRight + 16)} ${H}`);
+  // lifelines and headers underneath the steps
+  P.forEach((p, i) => {
+    svg.appendChild(el("line", { x1: x(i), y1: top + headH, x2: x(i), y2: H - 6, stroke: "#c9ccd4", "stroke-dasharray": "4 4" }));
+    svg.appendChild(el("rect", { x: x(i) - (colW - 30) / 2, y: top, width: colW - 30, height: headH, rx: 8, fill: p.tone === "accent" ? "#2f5fd1" : "#fff", stroke: p.tone === "accent" ? "#2f5fd1" : "#9aa2b3" }));
+    svg.appendChild(el("text", { x: x(i), y: top + (p.sub ? 21 : 29), "text-anchor": "middle", "font-size": 15, "font-weight": 600, fill: p.tone === "accent" ? "#fff" : "#1c1c1c" }, p.label));
+    if (p.sub) svg.appendChild(el("text", { x: x(i), y: top + 38, "text-anchor": "middle", "font-size": 12, fill: p.tone === "accent" ? "#dfe6f8" : "#666" }, p.sub));
+  });
+  svg.appendChild(g);
+}
+
+seq("seq-write", {
+  participants: [
+    { id: "app", label: "alice's app", sub: "alice signed in, as herself" },
+    { id: "apds", label: "alice's PDS" },
+    { id: "cpds", label: "the club's PDS", sub: "any PDS", tone: "accent" },
+    { id: "host", label: "community host", sub: "managing app, holds the roles" },
+  ],
+  steps: [
+    { from: "app", to: "apds", text: ["getServiceAuth", "aud = the club's PDS · lxm = createRecord"] },
+    { from: "apds", to: "app", kind: "return", text: ["service auth token", "iss = alice · 60 s · single-use jti"] },
+    { from: "app", to: "cpds", text: ["createRecord(repo = club, collection, record)", "Authorization: Bearer <that token>"] },
+    { kind: "self", at: "cpds", text: ["verify the signature against alice's DID document", "check aud and lxm · consume the jti (replay → 401)"] },
+    { kind: "self", at: "cpds", text: ["policy delegate-list: look alice up in the club's list", "policy managing-app: ask the host ↓ (cached until its expiry)"] },
+    { from: "cpds", to: "host", text: ["checkDelegate(account = club, did = alice)", "signed as the club, with the club's own key"] },
+    { from: "host", to: "cpds", kind: "return", text: ["{ permissions: [repo:social.grain.group.item?action=create…], expiresAt }", "empty = not a delegate"] },
+    { kind: "self", at: "cpds", text: ["bound the write: do her permissions cover create social.grain.group.item?", "the same ScopePermissions matcher an OAuth token gets"] },
+    { kind: "self", at: "cpds", text: ["commit under the club's key · sequence to the firehose as the club", "log (uri, alice, createRecord, via service-auth)"] },
+    { from: "cpds", to: "app", kind: "return", text: "{ uri: at://did:plc:club/…, cid, commit }" },
+    { kind: "note", at: "cpds", tone: "no", text: ["not a delegate → 403 NotDelegate · outside her bounds → 403 DelegateScopeMissing", "token reused → 401 ReplayedToken · a batch with one uncovered op → nothing written"] },
+  ],
+});
+
+seq("seq-signin", {
+  participants: [
+    { id: "client", label: "a stock OAuth client", sub: "has never heard of delegates" },
+    { id: "cpds", label: "the club's PDS", sub: "as authorization server", tone: "accent" },
+    { id: "apds", label: "alice's PDS" },
+  ],
+  colW: 330,
+  steps: [
+    { from: "client", to: "cpds", text: ["OAuth authorize, login_hint = club.test", "scope = whatever the client always asks for"] },
+    { from: "cpds", to: "client", kind: "return", text: ["the stock sign-in screen", "+ one link: \"sign in as a delegate of this account\""] },
+    { kind: "note", at: "cpds", text: "alice types her own handle, not the club's password (there may be none)" },
+    { from: "cpds", to: "apds", text: ["nested OAuth authorization, as a client", "scope = atproto only: who is this person"] },
+    { from: "apds", to: "cpds", kind: "return", text: ["alice authenticated", "token used once to confirm the sub, then discarded"] },
+    { kind: "self", at: "cpds", span: 2, text: ["is alice a delegate or controller of the club? (list, or the managing app)", "bind this authorization request to alice; offer club.test as signed in on this device"] },
+    { from: "cpds", to: "client", kind: "return", text: ["the club's own consent screen", "the client's requested scopes, consented to as the club"] },
+    { kind: "self", at: "cpds", span: 2, text: ["scope = requested ∩ alice's permissions · act.sub = alice", "the device account made for consent is removed; it can authorize nothing else"] },
+    { from: "cpds", to: "client", kind: "return", text: ["access token for the club, narrowed, act.sub = alice", "sub = did:plc:club"] },
+    { from: "client", to: "cpds", text: ["createRecord(repo = club, …)", "an ordinary write with the session's own DID"] },
+    { kind: "self", at: "cpds", span: 2, text: ["re-narrow to alice's current permissions (removed → 401, unrefreshable)", "bound · commit as the club · log (uri, alice, via session)"] },
+    { from: "client", to: "cpds", text: "getSession" },
+    { from: "cpds", to: "client", kind: "return", text: "{ did: club, handle: club.test, act: { sub: did:plc:alice } }" },
+  ],
+});
+
+seq("seq-create", {
+  participants: [
+    { id: "app", label: "alice's app", sub: "alice signed in, as herself" },
+    { id: "apds", label: "alice's PDS" },
+    { id: "pds", label: "pds.example", sub: "where the community will live, any PDS", tone: "accent" },
+  ],
+  colW: 330,
+  steps: [
+    { from: "app", to: "apds", text: ["getServiceAuth", "aud = pds.example · lxm = createDelegatedAccount"] },
+    { from: "apds", to: "app", kind: "return", text: "service auth token, iss = alice" },
+    { from: "app", to: "pds", text: ["createDelegatedAccount({ handle: riders.test,", "controllers: [alice], delegates: [alice → repo:social.grain.group.item…] })"] },
+    { kind: "self", at: "pds", text: ["verify alice's token · alice must be among the controllers", "handle available? operator policy: invites, allowlists, rate limits"] },
+    { kind: "self", at: "pds", text: ["signing key · PLC identity (rotation: PDS key, optional recovery key) · empty repo", "account with no usable credentials: no password anyone knows, no email anyone reads"] },
+    { kind: "self", at: "pds", text: "record controllers, delegates, policy" },
+    { from: "pds", to: "app", kind: "return", text: "{ did: did:plc:riders, handle: riders.test }" },
+    { kind: "note", at: "app", to: "pds", text: ["The app holds nothing for riders. alice writes as it from this app (path 1), opens its settings by signing in", "as it as a controller (path 2), and adds the next moderator. If the app disappears, riders is unaffected."] },
+  ],
+});
+
+seq("seq-host", {
+  participants: [
+    { id: "client", label: "any OAuth client", sub: "a steward's" },
+    { id: "host", label: "the account's server", sub: "PDS + authorization server + roles, in one", tone: "accent" },
+    { id: "apds", label: "alice's PDS" },
+  ],
+  colW: 330,
+  steps: [
+    { from: "client", to: "host", text: ["OAuth authorize as the community", "the client's usual scopes"] },
+    { from: "host", to: "client", kind: "return", text: "sign-in screen, with a way to sign in as a steward" },
+    { from: "host", to: "apds", text: "authn-only login: atproto, no permissions asked" },
+    { from: "apds", to: "host", kind: "return", text: "alice authenticated" },
+    { kind: "self", at: "host", text: ["alice's role on this community permits the requested scope?", "issue the community's session, narrowed to that role; log it"] },
+    { from: "host", to: "client", kind: "return", text: "session for the community, act.sub = alice" },
+    { from: "client", to: "host", text: "createRecord(repo = community, …), an ordinary write" },
+    { from: "host", to: "client", kind: "return", text: "committed as the community" },
+    { kind: "note", at: "client", to: "apds", text: ["To move the community: standard migration carries the repo and the DID to any PDS.", "The roles, the login method, and the log stay behind unless the next server is the same kind."] },
+  ],
+});
+
+seq("seq-host-create", {
+  participants: [
+    { id: "app", label: "an app", sub: "with a relationship to the host" },
+    { id: "host", label: "the account's server", sub: "a group host, or any server with this built in", tone: "accent" },
+    { id: "user", label: "a person with an account there", sub: "the founder" },
+  ],
+  colW: 330,
+  steps: [
+    { kind: "note", at: "app", to: "user", text: "Form 1: a person who already has an account on this server creates the community there" },
+    { from: "user", to: "host", text: ["create a delegated account (signed in as themselves)", "handle · controllers: [me] · what each controller may do"] },
+    { kind: "self", at: "host", text: ["PLC identity · repo · an account with no meaningful password or email", "the founder's own account is the way in, from now on"] },
+    { from: "host", to: "user", kind: "return", text: "{ did, handle }" },
+    { kind: "note", at: "app", to: "user", text: "Form 2: a group host offers apps an admin API, so a community is created from inside an app" },
+    { from: "app", to: "host", text: ["create community (admin auth)", "handle · stewards: [alice] · the app's own OAuth scopes"] },
+    { kind: "self", at: "host", text: ["reserve the handle · PLC identity · account · spaces and roles", "an OAuth session for the app"] },
+    { from: "host", to: "app", kind: "return", text: ["refresh token for the community", "the app now holds a credential for it; the founder never left the app"] },
+  ],
+});
+
+seq("seq-app", {
+  participants: [
+    { id: "admin", label: "an admin", sub: "holds the community's credentials" },
+    { id: "app", label: "the app", sub: "e.g. a community feature in a client", tone: "accent" },
+    { id: "cpds", label: "the community's PDS", sub: "any PDS" },
+    { id: "mod", label: "a moderator", sub: "a user of the app" },
+  ],
+  colW: 270,
+  steps: [
+    { from: "admin", to: "app", text: "\"connect our community\"" },
+    { from: "app", to: "cpds", text: ["ordinary OAuth, as the community", "the app's own scopes"] },
+    { from: "cpds", to: "app", kind: "return", text: ["session for the community", "the app holds its refresh token"] },
+    { kind: "self", at: "app", text: ["the app's own notion of who may use that session:", "roles it keeps, checked by its own code"] },
+    { from: "mod", to: "app", text: "\"pin this thread\" (signed in as themselves, to the app)" },
+    { kind: "self", at: "app", text: "is this user allowed? (the app decides)" },
+    { from: "app", to: "cpds", text: ["createRecord as the community", "with the app's session; the PDS sees only the app"] },
+    { from: "cpds", to: "app", kind: "return", text: "committed as the community" },
+    { kind: "note", at: "admin", to: "mod", text: ["Alternative within the same option: each moderator does the OAuth flow as the community themselves,", "and the app keeps one credential per moderator. Same mechanism; more sessions, no admin needed."] },
+  ],
+});
+
+seq("seq-scopes", {
+  participants: [
+    { id: "app", label: "the app", sub: "alice signed in, as herself" },
+    { id: "apds", label: "alice's PDS", sub: "her authorization server", tone: "accent" },
+    { id: "cpds", label: "the community's PDS" },
+  ],
+  colW: 330,
+  steps: [
+    { from: "app", to: "apds", text: ["OAuth authorize, with delegated scopes", "e.g. \"write repo records for accounts I manage\""] },
+    { kind: "self", at: "apds", text: ["consent screen: which accounts? (open audience, or a picker)", "the app cannot supply the audience itself"] },
+    { from: "apds", to: "app", kind: "return", text: "session for alice, carrying the delegated scopes" },
+    { from: "app", to: "cpds", text: ["createRecord(repo = community, …)", "a token that proves: alice, via this app, may act for the community"] },
+    { kind: "self", at: "cpds", text: ["verify the delegation chain (a new token class or format)", "and separately: does the community allow alice? (unspecified here)"] },
+    { from: "cpds", to: "app", kind: "return", text: "committed as the community" },
+    { kind: "note", at: "app", to: "cpds", text: ["What is new: a token that carries a delegation, and a consent that names an audience.", "Both are protocol-level, and a chain-of-delegation format is where this is expected to end up."] },
+  ],
+});
+
+// Slide numbers, computed so they stay right when slides are added or removed.
+document.querySelectorAll(".slide").forEach((s, i) => { const n = document.createElement("div"); n.className = "num"; n.textContent = String(i + 1); s.appendChild(n); });
+
+// Keyboard navigation between slides.
+const slides = [...document.querySelectorAll(".slide")];
+const current = () => slides.findIndex((s) => s.getBoundingClientRect().top > -window.innerHeight / 2);
+addEventListener("keydown", (e) => {
+  const map = { ArrowRight: 1, ArrowDown: 1, PageDown: 1, " ": 1, ArrowLeft: -1, ArrowUp: -1, PageUp: -1 };
+  if (!(e.key in map) || e.metaKey || e.ctrlKey) return;
+  e.preventDefault();
+  const i = Math.min(slides.length - 1, Math.max(0, current() + map[e.key]));
+  slides[i].scrollIntoView({ behavior: "smooth" });
+});
+</script>
+</body>
+</html>

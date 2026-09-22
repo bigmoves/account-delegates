@@ -30,6 +30,10 @@ export type AppOpts = {
   actFor: ActFor[];
   /** Managing apps the delegate page asks "which accounts name me". Host-scoped, by nature. */
   managingApps: { url: string; name: string; serviceRef: string }[];
+  /** The PDS the accounts this app acts for live on, as `did#atproto_pds`, for an audience-specific permission: what an app for one host asks for. */
+  delegateAud: string;
+  /** Where this app creates communities: the same PDS, by URL. */
+  createOn: { url: string; did: string };
   /** Shown on the index page. */
   network: { name: string; url: string; did?: string }[];
   log: (line: string) => void;
@@ -44,16 +48,31 @@ const SCOPES = {
   /** The controller's tool. `account:delegates` is the permission the RFC adds. */
   club: "atproto account:delegates?action=manage",
   /**
-   * The delegate's app, the one-line consent: a permission set. The set itself
-   * carries `aud=*`; an `include:` may only name a specific service as `aud`,
-   * and a general-purpose client cannot know where the accounts its user is a
-   * delegate of are hosted.
+   * The delegate's app as a general-purpose client: the permission set, whose
+   * own text says the audience is open. The set carries `aud=*`; an `include:`
+   * may only name a specific service as `aud`, and a general-purpose client
+   * cannot know where the accounts its user is a delegate of are hosted.
    */
   set: "atproto include:com.atproto.repo.delegatedWrites",
-  /** The delegate's app, the raw form: what the consent screen renders with no permission set. */
-  raw: "atproto rpc:com.atproto.repo.createRecord?aud=*",
+  /**
+   * The delegate's app as a client for one host: the default the RFC now
+   * recommends. The permission names the PDS the accounts live on, so the
+   * consent is bounded to that server; the screen still renders it generically.
+   */
+  raw: (aud: string) => `atproto rpc?lxm=com.atproto.repo.createRecord&lxm=com.atproto.server.createDelegatedAccount&aud=${encodeURIComponent(aud)}`,
+  /**
+   * A stock client that has never heard of delegates. It signs in as whatever
+   * account is typed in, asking for what an ordinary app asks for. When the
+   * account is the club and the person is a delegate, the token it gets back
+   * is the club's, narrowed to what the delegate may do.
+   */
+  stock: "atproto repo:social.grain.group.item repo:app.bsky.feed.post?action=create blob:image/*",
 } as const;
 type Door = keyof typeof SCOPES;
+const scopeOf = (door: Door, aud: string): string => {
+  const s = SCOPES[door];
+  return typeof s === "function" ? s(aud) : s;
+};
 
 class MemStore<V> {
   private m = new Map<string, V>();
@@ -75,14 +94,14 @@ function localHandleResolver(pdses: string[]) {
   };
 }
 
-function loopbackClient(opts: { base: string; door: Door; plcUrl: string; handleResolvers: string[]; stateStore: MemStore<NodeSavedState>; sessionStore: MemStore<NodeSavedSession> }) {
+function loopbackClient(opts: { base: string; door: Door; scope: string; plcUrl: string; handleResolvers: string[]; stateStore: MemStore<NodeSavedState>; sessionStore: MemStore<NodeSavedSession> }) {
   const redirect = `${opts.base}/oauth/${opts.door}/callback`;
-  const scope = SCOPES[opts.door];
+  const scope = opts.scope;
   const client_id = `http://localhost?${new URLSearchParams({ redirect_uri: redirect, scope })}`;
   return new NodeOAuthClient({
     clientMetadata: {
       client_id,
-      client_name: opts.door === "club" ? "Club settings (account delegates demo)" : "Grain-ish (account delegates demo)",
+      client_name: opts.door === "club" ? "Club settings (account delegates demo)" : opts.door === "stock" ? "A stock client (account delegates demo)" : "Grain-ish (account delegates demo)",
       redirect_uris: [redirect],
       scope,
       response_types: ["code"],
@@ -116,7 +135,7 @@ button{font:inherit;padding:.35rem .8rem}.muted{color:#666}.ok{color:#177a2b}.no
 .note{background:#f4f6fb;border-left:3px solid #7a8cc7;padding:.6rem .8rem;margin:1rem 0}
 nav a{margin-right:1rem}label{display:block;margin:.5rem 0}
 </style></head><body>
-<nav><a href="/">demo</a><a href="/club">the club</a><a href="/alice">alice</a></nav>
+<nav><a href="/">demo</a><a href="/club">the club</a><a href="/alice">alice</a><a href="/stock">a stock client</a></nav>
 <h1>${esc(title)}</h1>
 ${flash ? `<div class="flash">${esc(flash)}</div>` : ""}
 ${body}
@@ -129,15 +148,18 @@ export async function startApp(opts: AppOpts) {
   const { port, plcUrl, log } = opts;
   const base = `http://127.0.0.1:${port}`;
   const stateStore = new MemStore<NodeSavedState>();
-  const sessionStore = new MemStore<NodeSavedSession>();
-  const clients: Record<Door, NodeOAuthClient> = {
-    club: loopbackClient({ base, door: "club", plcUrl, handleResolvers: opts.handleResolvers, stateStore, sessionStore }),
-    set: loopbackClient({ base, door: "set", plcUrl, handleResolvers: opts.handleResolvers, stateStore, sessionStore }),
-    raw: loopbackClient({ base, door: "raw", plcUrl, handleResolvers: opts.handleResolvers, stateStore, sessionStore }),
-  };
+  // Sessions are stored by DID, and two doors can hold a session for the same
+  // DID (the club's own tool, and a stock client a delegate signed in to as
+  // the club): one store per door.
+  const clientFor = (door: Door) => loopbackClient({ base, door, scope: scopeOf(door, opts.delegateAud), plcUrl, handleResolvers: opts.handleResolvers, stateStore, sessionStore: new MemStore<NodeSavedSession>() });
+  const clients: Record<Door, NodeOAuthClient> = { club: clientFor("club"), set: clientFor("set"), raw: clientFor("raw"), stock: clientFor("stock") };
   const idResolver = new IdResolver({ plcUrl });
   /** What alice's app has seen happen, newest first. */
   const outcomes: { at: string; what: string; status: number; detail: string; ok: boolean }[] = [];
+  /** The same, for the stock client. */
+  const stockOutcomes: typeof outcomes = [];
+  /** Communities created from alice's app, this run. */
+  const created: ActFor[] = [];
 
   /** The accounts a person may act for, as far as this app can tell, and where each answer came from. */
   async function actingAsChoices(did: string): Promise<(ActFor & { from: string })[]> {
@@ -156,6 +178,9 @@ export async function startApp(opts: AppOpts) {
     for (const a of opts.actFor) {
       if (!out.some((c) => c.did === a.did)) out.push({ ...a, from: "configured in this app" });
     }
+    for (const a of created) {
+      if (!out.some((c) => c.did === a.did)) out.push({ ...a, from: "created from this app" });
+    }
     return out;
   }
 
@@ -164,7 +189,8 @@ export async function startApp(opts: AppOpts) {
   const cookies = (req: Request) => Object.fromEntries((req.headers.cookie ?? "").split(";").map((c) => c.trim().split("=")).filter((p) => p.length === 2).map(([k, v]) => [k, decodeURIComponent(v!)]));
   const setCookie = (res: Response, name: string, value: string | null) =>
     res.setHeader("set-cookie", value === null ? `${name}=; Path=/; Max-Age=0` : `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax`);
-  type Persona = "club" | "alice";
+  type Persona = "club" | "alice" | "stock";
+  const personaOf = (door: Door): Persona => (door === "club" ? "club" : door === "stock" ? "stock" : "alice");
   async function sessionFor(req: Request, persona: Persona): Promise<{ session: OAuthSession; door: Door } | null> {
     const c = cookies(req);
     const did = c[persona];
@@ -188,14 +214,16 @@ export async function startApp(opts: AppOpts) {
   // --- index ---
   app.get("/", (_req, res) => {
     res.send(page("Account delegates, in a browser", `
-<p>Two people, one account, no shared secret. The <a href="/club">club</a> names who may write as it. <a href="/alice">alice</a> signs in as herself and writes as the club.</p>
+<p>Two people, one account, no shared secret. The <a href="/club">club</a> names who may write as it. Then alice exercises that two ways: <a href="/alice">her own app</a> signs her in as herself and writes as the club; <a href="/stock">a stock client</a> signs in <i>as the club</i>, with alice authenticating at her own PDS, and gets the club's session narrowed to what she may do.</p>
 <h2>Walk-through</h2>
 <ol>
 <li>Open <a href="/club">the club</a> and sign in. The consent screen is the PDS's own; it shows a <b>Delegates</b> card for the <code>account:delegates</code> permission.</li>
 <li>Make alice a delegate for <code>social.grain.group.item</code>.</li>
-<li>Open <a href="/alice">alice</a> and sign in with the permission set. The consent screen reads <i>Write to accounts that have made you a delegate</i>. Sign out and try the raw scope to see the generic rendering.</li>
+<li><b>Delegated write.</b> Open <a href="/alice">alice</a> and sign in as an app for one host: the permission names the club's PDS. Sign out and sign in as a general-purpose app to see the open-audience consent, which says so in its title.</li>
 <li>Acting as the club, accept a gallery. It lands under the club's DID. Try posting as the club: refused, outside her bounds.</li>
-<li>Back at the club: the log names alice. Remove her. Her next write is refused.</li>
+<li><b>Sign-in as.</b> Open <a href="/stock">the stock client</a>, type <code>club.test</code>, and choose <i>sign in as a delegate</i>. The club's PDS sends you to alice's PDS to authenticate (<code>atproto</code> only), brings you back, and the club's own consent screen lists <code>club.test</code> as signed in. Consent. The client's token is the club's, with <code>act.sub</code> = alice and the scope cut down to her permissions.</li>
+<li>Accept a gallery from the stock client: an ordinary <code>createRecord</code> as the club. Post: refused. The club's log names alice either way, and says which path.</li>
+<li>Back at the club: remove her. Her next write on either path is refused; the stock client's session dies with it.</li>
 </ol>
 <h2>The network this app talks to</h2>
 <table>${opts.network.map((n) => `<tr><th>${esc(n.name)}</th><td><a href="${esc(n.url)}">${esc(n.url)}</a></td><td class="muted">${esc(n.did ?? "")}</td></tr>`).join("")}</table>
@@ -207,10 +235,18 @@ export async function startApp(opts: AppOpts) {
     const door = req.params.door as Door;
     if (!clients[door]) return void res.status(404).end();
     const who = String(req.body.who ?? "").trim();
-    const persona: Persona = door === "club" ? "club" : "alice";
+    const persona = personaOf(door);
     try {
       const url = await clients[door].authorize(who);
       log(`  app: ${door}: authorize ${who} → ${url.origin}${url.pathname}`);
+      if (req.body.as_delegate) {
+        // The button a PDS would put on its own sign-in screen. The app only
+        // knows the authorize URL; the account's PDS does the rest and comes
+        // back to that URL.
+        const at = `${url.origin}/oauth/delegate?${new URLSearchParams({ account: who, return_to: url.toString() })}`;
+        log(`  app: ${door}: sending the browser to the PDS's sign-in-as page first`);
+        return void res.redirect(at);
+      }
       res.redirect(url.toString());
     } catch (err: any) {
       // e.g. the PDS refused the scope: an `include:` it could not resolve.
@@ -222,7 +258,7 @@ export async function startApp(opts: AppOpts) {
     const door = req.params.door as Door;
     if (!clients[door]) return void res.status(404).end();
     const params = new URLSearchParams(req.url.split("?")[1] ?? "");
-    const persona: Persona = door === "club" ? "club" : "alice";
+    const persona = personaOf(door);
     try {
       const { session } = await clients[door].callback(params);
       res.setHeader("set-cookie", [
@@ -236,7 +272,7 @@ export async function startApp(opts: AppOpts) {
       res.redirect(`/${persona}?flash=${encodeURIComponent(`Sign-in did not complete: ${err?.message ?? err}`)}`);
     }
   }));
-  app.post("/:persona(club|alice)/sign-out", wrap(async (req, res) => {
+  app.post("/:persona(club|alice|stock)/sign-out", wrap(async (req, res) => {
     const persona = req.params.persona as Persona;
     const s = await sessionFor(req, persona);
     if (s) await s.session.signOut().catch(() => {});
@@ -263,13 +299,16 @@ export async function startApp(opts: AppOpts) {
     const s = await sessionFor(req, "club");
     if (!s) {
       return void res.send(page("The club", `
-<p>The controller's tool. It signs in <b>as the club</b>, once, with the one permission this needs: <code>${esc(SCOPES.club)}</code>. It never posts as the club; the delegates do that as themselves.</p>
-<form method="post" action="/oauth/club/start"><label>Account <input type="text" name="who" value="club.test"></label><button>Sign in as the club</button></form>
-<div class="note">What to look for on the consent screen: an account section with a <b>Delegates</b> card. That card exists because the RFC adds the <code>account:delegates</code> attribute; this demo teaches the installed provider UI about it (see <code>scripts/patch-account-delegates.mjs</code>).</div>`, flash));
+<p>The controller's tool. It signs in <b>as the account</b>, once, with the one permission this needs: <code>${esc(SCOPES.club)}</code>. It never posts as the account; the delegates do that as themselves.</p>
+<form method="post" action="/oauth/club/start"><label>Account <input type="text" name="who" value="club.test"></label>
+<button>Sign in with the account's password</button> <span class="muted">the club has one: <code>club-pass</code></span><br><br>
+<button name="as_delegate" value="1">Sign in as a controller</button> <span class="muted">authenticate at <i>your</i> PDS; for an account with no password, such as one created from an app</span></form>
+<div class="note">What to look for on the consent screen: an account section with a <b>Delegates</b> card. That card exists because the RFC adds the <code>account:delegates</code> attribute; this demo teaches the installed provider UI about it (see <code>scripts/patch-account-delegates.mjs</code>). A controller's sign-in keeps that permission through the narrowing; anyone else's loses it, and this tool is refused.</div>`, flash));
     }
     const { session } = s;
     const cfg = await xrpc(session, "com.atproto.server.getDelegateConfig");
     const writes = await xrpc(session, "com.atproto.server.listDelegatedWrites", { params: { limit: "20" } });
+    const sessions = await xrpc(session, "com.atproto.server.listDelegatedSessions");
     const info = await session.getTokenInfo().catch(() => null);
     if (cfg.status !== 200) {
       return void res.send(page("The club", `<p class="no">getDelegateConfig → ${cfg.status} ${esc(cfg.json.error)}: ${esc(cfg.json.message)}</p>
@@ -277,9 +316,19 @@ export async function startApp(opts: AppOpts) {
 <form method="post" action="/club/sign-out"><button>Sign out</button></form>`, flash));
     }
     const delegates: any[] = cfg.json.delegates ?? [];
+    const controllers: string[] = cfg.json.controllers ?? [];
+    const who = await xrpc(session, "com.atproto.server.getSession");
+    const act = who.json.act?.sub as string | undefined;
     const firstPerson = opts.network.find((n) => n.name.startsWith("person"));
     res.send(page("The club", `
-<p>Signed in as <code>${esc(session.did)}</code> with scope <code>${esc(info?.scope ?? "?")}</code>. <form class="inline" method="post" action="/club/sign-out"><button>Sign out</button></form></p>
+<p>Signed in as <code>${esc(session.did)}</code> (<code>@${esc(who.json.handle ?? "?")}</code>) with scope <code>${esc(info?.scope ?? "?")}</code>.${act ? ` <b>Acting:</b> <code>${esc(act)}</code>, a controller, signed in as the account.` : ""} <form class="inline" method="post" action="/club/sign-out"><button>Sign out</button></form></p>
+
+<h2>Controllers</h2>
+<p class="muted">DIDs that may manage this configuration: by signing in as the account, or by service auth from their own session. The account's own password, if it has one, can too. Controllers are not delegates; add a controller below as a delegate as well if they should write.</p>
+<form method="post" action="/club/controllers">
+<label>Controllers, one per line<br><textarea name="controllers" rows="2" style="width:100%;font:13px ui-monospace,monospace">${esc(controllers.join("\n"))}</textarea></label>
+<button>Save controllers</button>
+</form>
 
 <h2>Policy</h2>
 <form method="post" action="/club/policy">
@@ -307,10 +356,16 @@ ${delegates.length ? delegates.map((d) => `<tr><td><code>${esc(d.did)}</code></t
 </form>
 
 <h2>Who wrote what</h2>
-<table><tr><th>When</th><th>Delegate</th><th>Method</th><th>Record</th></tr>
-${(writes.json.writes ?? []).length ? (writes.json.writes as any[]).map((w) => `<tr><td class="muted">${esc(w.at)}</td><td><code>${esc(w.delegate)}</code></td><td>${esc(w.lxm.replace("com.atproto.repo.", ""))}</td><td><code>${esc(w.uri)}</code></td></tr>`).join("") : `<tr><td colspan="4" class="muted">Nothing yet.</td></tr>`}
+<table><tr><th>When</th><th>Delegate</th><th>Via</th><th>Method</th><th>Record</th></tr>
+${(writes.json.writes ?? []).length ? (writes.json.writes as any[]).map((w) => `<tr><td class="muted">${esc(w.at)}</td><td><code>${esc(w.delegate)}</code></td><td>${esc(w.via)}</td><td>${esc(w.lxm.replace("com.atproto.repo.", ""))}</td><td><code>${esc(w.uri)}</code></td></tr>`).join("") : `<tr><td colspan="5" class="muted">Nothing yet.</td></tr>`}
 </table>
-<p class="muted">This log is account state on the club's PDS, not on the firehose and not in the commit. The records themselves are the club's, indistinguishable from its own writes.</p>`, flash));
+<p class="muted">This log is account state on the club's PDS, not on the firehose and not in the commit. The records themselves are the club's, indistinguishable from its own writes. <b>Via</b> says how the delegate reached the PDS: <code>service-auth</code> is a delegated write from their own session; <code>session</code> is a sign-in as the club.</p>
+
+<h2>Delegated sessions</h2>
+<table><tr><th>When</th><th>Delegate</th><th>Client</th><th>Token</th></tr>
+${(sessions.json.sessions ?? []).length ? (sessions.json.sessions as any[]).map((s) => `<tr><td class="muted">${esc(s.at)}</td><td><code>${esc(s.delegate)}</code></td><td class="muted">${esc(s.clientId ?? "")}</td><td class="muted"><code>${esc(s.jti)}</code></td></tr>`).join("") : `<tr><td colspan="4" class="muted">None. A delegate who signs in <i>as</i> the club appears here.</td></tr>`}
+</table>
+<p class="muted">Each is an OAuth session for the club, issued to a delegate who authenticated at their own PDS, narrowed to their permissions and carrying <code>act.sub</code>. Removing the delegate ends it on its next request.</p>`, flash));
   }));
 
   app.post("/club/policy", wrap(async (req, res) => {
@@ -320,6 +375,13 @@ ${(writes.json.writes ?? []).length ? (writes.json.writes as any[]).map((w) => `
     if (body.policy === "managing-app") body.managingApp = String(req.body.managingApp ?? "").trim();
     const r = await xrpc(s.session, "com.atproto.server.updateDelegateConfig", { body });
     res.redirect(`/club?flash=${encodeURIComponent(r.status === 200 ? `Policy is now ${r.json.policy}.` : `updateDelegateConfig → ${r.status} ${r.json.error}: ${r.json.message}`)}`);
+  }));
+  app.post("/club/controllers", wrap(async (req, res) => {
+    const s = await sessionFor(req, "club");
+    if (!s) return void res.redirect("/club");
+    const controllers = String(req.body.controllers ?? "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const r = await xrpc(s.session, "com.atproto.server.updateDelegateConfig", { body: { controllers } });
+    res.redirect(`/club?flash=${encodeURIComponent(r.status === 200 ? `Controllers: ${(r.json.controllers ?? []).length}.` : `updateDelegateConfig → ${r.status} ${r.json.error}: ${r.json.message}`)}`);
   }));
   app.post("/club/delegates/put", wrap(async (req, res) => {
     const s = await sessionFor(req, "club");
@@ -341,18 +403,18 @@ ${(writes.json.writes ?? []).length ? (writes.json.writes as any[]).map((w) => `
     const s = await sessionFor(req, "alice");
     if (!s) {
       return void res.send(page("alice", `
-<p>An app alice uses. It knows nothing about the club's host. She signs in <b>as herself</b>, once, at her own PDS. Two ways to ask for the same thing, so you can compare consent screens:</p>
-<form method="post" action="/oauth/set/start"><label>Account <input type="text" name="who" value="alice.test"></label>
-<button>Sign in with the permission set</button> <span class="muted"><code>${esc(SCOPES.set)}</code></span></form>
-<form method="post" action="/oauth/raw/start" style="margin-top:.5rem"><input type="hidden" name="who" value="alice.test">
-<button>Sign in with the raw scope</button> <span class="muted"><code>${esc(SCOPES.raw)}</code></span></form>
-<div class="note">With the permission set, the consent screen reads <i>Write to accounts that have made you a delegate</i>, from the set published as <code>com.atproto.repo.delegatedWrites</code>. With the raw scope it reads <i>Authenticate: perform actions on your behalf</i>, with a Call / Towards table behind the question mark. Same grant, different legibility. Nothing in the consent names the club: that authorization is the club's to give, on its own PDS.</div>`, flash));
+<p>An app alice uses. It knows nothing about the club's host. She signs in <b>as herself</b>, once, at her own PDS. Two kinds of app, two consents:</p>
+<form method="post" action="/oauth/raw/start"><label>Account <input type="text" name="who" value="alice.test"></label>
+<button>Sign in as an app for one host</button> <span class="muted"><code>${esc(scopeOf("raw", opts.delegateAud))}</code></span></form>
+<form method="post" action="/oauth/set/start" style="margin-top:.5rem"><input type="hidden" name="who" value="alice.test">
+<button>Sign in as a general-purpose app</button> <span class="muted"><code>${esc(SCOPES.set)}</code></span></form>
+<div class="note"><b>One host</b> is the default: the permission names the PDS the accounts live on, so what alice grants is bounded to that server. The stock consent screen renders it as <i>Authenticate: perform actions on your behalf</i>, with the server behind the question mark. <b>General-purpose</b> is the open audience: the app cannot know where the accounts its user is a delegate of are hosted, so it asks through the permission set <code>com.atproto.repo.delegatedWrites</code>, whose own title says so: <i>Write to any account that has made you a delegate, on any server</i>. Either way, nothing in this consent names the club: that authorization is the club's to give, on its own PDS, and the club's bounds apply regardless of what this app was granted.</div>`, flash));
     }
     const { session, door } = s;
     const info = await session.getTokenInfo().catch(() => null);
     const choices = await actingAsChoices(session.did);
     res.send(page("alice", `
-<p>Signed in as <code>${esc(session.did)}</code> (${door === "set" ? "permission set" : "raw scope"}), token scope <code>${esc(info?.scope ?? "?")}</code>. <form class="inline" method="post" action="/alice/sign-out"><button>Sign out</button></form></p>
+<p>Signed in as <code>${esc(session.did)}</code> (${door === "set" ? "general-purpose app, open audience" : "app for one host"}), token scope <code>${esc(info?.scope ?? "?")}</code>. <form class="inline" method="post" action="/alice/sign-out"><button>Sign out</button></form></p>
 
 <h2>Acting as</h2>
 <form method="post" action="/alice/write">
@@ -364,10 +426,55 @@ ${choices.map((c, i) => `<label><input type="radio" name="as" value="${esc(c.did
 </p>
 </form>
 
+<h2>Create a community</h2>
+<form method="post" action="/alice/create">
+<label>Handle <input type="text" name="handle" value="riders.test"></label>
+<label><input type="checkbox" name="asDelegate" value="1" checked> Also make me a delegate for <code>social.grain.group.item</code></label>
+<button>Create it on ${esc(new URL(opts.createOn.url).host)}</button>
+</form>
+<div class="note"><b>What this does.</b> The app asks alice's own PDS for a service auth token addressed to the community's future PDS and bound to <code>createDelegatedAccount</code>, and calls it. That PDS mints the DID and repo, gives the account no usable credentials (an unguessable password it discards, an email nobody reads), and records alice as its <b>controller</b>. The app never holds anything for the community. From here alice writes as it from this app, or opens <a href="/club">the tool</a> and signs in as it as a controller.${door === "set" ? " <span class=\"no\">Your session came through the permission set, which covers repo writes only; sign in as an app for one host to create.</span>" : ""}</div>
+
 <h2>What happened</h2>
 <table><tr><th>When</th><th>What</th><th>Outcome</th></tr>
 ${outcomes.length ? outcomes.map((o) => `<tr><td class="muted">${esc(o.at)}</td><td>${esc(o.what)}</td><td class="${o.ok ? "ok" : "no"}">${esc(o.status)} ${esc(o.detail)}</td></tr>`).join("") : `<tr><td colspan="3" class="muted">Nothing yet.</td></tr>`}
 </table>`, flash));
+  }));
+
+  app.post("/alice/create", wrap(async (req, res) => {
+    const s = await sessionFor(req, "alice");
+    if (!s) return void res.redirect("/alice");
+    const { session } = s;
+    const handle = String(req.body.handle ?? "").trim();
+    const asDelegate = !!req.body.asDelegate;
+    const now = new Date().toISOString();
+    const label = `create ${handle}`;
+    const push = (status: number, detail: string, ok: boolean) => outcomes.unshift({ at: now, what: label, status, detail, ok });
+    const lxm = "com.atproto.server.createDelegatedAccount";
+    const sa = await session.fetchHandler(`/xrpc/com.atproto.server.getServiceAuth?${new URLSearchParams({ aud: `${opts.createOn.did}#atproto_pds`, lxm })}`);
+    const saJson: any = await sa.json().catch(() => ({}));
+    if (sa.status !== 200) {
+      push(sa.status, `getServiceAuth at alice's PDS: ${saJson.error ?? ""} ${saJson.message ?? ""}`.trim(), false);
+      log(`  app: alice: ${label} → getServiceAuth ${sa.status} ${saJson.error}`);
+      return void res.redirect("/alice");
+    }
+    const r = await fetch(`${opts.createOn.url}/xrpc/${lxm}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${saJson.token}` },
+      body: JSON.stringify({
+        handle,
+        controllers: [session.did],
+        delegates: asDelegate ? [{ did: session.did, permissions: ["repo:social.grain.group.item?action=create&action=delete"], label: "founder" }] : [],
+      }),
+    });
+    const j: any = await r.json().catch(() => ({}));
+    if (r.status === 200) {
+      created.push({ did: j.did, handle: j.handle, label: j.handle });
+      push(200, `created ${j.did} as ${j.handle}; you are its controller`, true);
+    } else {
+      push(r.status, `${j.error ?? ""}: ${j.message ?? ""}`, false);
+    }
+    log(`  app: alice: ${label} → ${r.status} ${j.error ?? j.did ?? ""}`);
+    res.redirect("/alice");
   }));
 
   app.post("/alice/write", wrap(async (req, res) => {
@@ -391,7 +498,8 @@ ${outcomes.length ? outcomes.map((o) => `<tr><td class="muted">${esc(o.at)}</td>
     const pdsUrl = (doc?.service ?? []).find((x: any) => x.id === "#atproto_pds")?.serviceEndpoint as string | undefined;
     if (!pdsUrl) { push(0, "could not resolve the account's PDS", false); return void res.redirect("/alice"); }
     const describe = await fetch(`${pdsUrl}/xrpc/com.atproto.server.describeServer`).then((r) => r.json() as Promise<{ did: string }>);
-    const aud = describe.did;
+    // The PDS as a service reference, the form an rpc: permission's audience takes.
+    const aud = `${describe.did}#atproto_pds`;
 
     // 2. Ask alice's own PDS for a token addressed to the club's PDS, bound to this method.
     //    This is the call the OAuth grant gates: no rpc: permission, no token.
@@ -418,6 +526,70 @@ ${outcomes.length ? outcomes.map((o) => `<tr><td class="muted">${esc(o.at)}</td>
     }
     log(`  app: alice: ${label} → ${w.status} ${wJson.error ?? wJson.uri ?? ""}`);
     res.redirect("/alice");
+  }));
+
+  // --- a stock client: sign in as the club ---
+  app.get("/stock", wrap(async (req, res) => {
+    const flash = typeof req.query.flash === "string" ? req.query.flash : undefined;
+    const s = await sessionFor(req, "stock");
+    if (!s) {
+      return void res.send(page("A stock client", `
+<p>A client that has never heard of delegates. It signs in as whatever account you type, asking for what an ordinary app asks for: <code>${esc(SCOPES.stock)}</code>.</p>
+<form method="post" action="/oauth/stock/start"><label>Account <input type="text" name="who" value="club.test"></label>
+<button>Sign in</button> <span class="muted">the club's own password: <code>club-pass</code></span><br><br>
+<button name="as_delegate" value="1">Sign in as a delegate of this account</button> <span class="muted">authenticate at <i>your</i> PDS instead: <code>alice.test</code> / <code>alice-pass</code></span></form>
+<div class="note">The second button is what the club's PDS would put on its own sign-in screen; this app only knows the authorize URL and is sent back to it. Watch the sequence: the club's PDS asks for your handle, sends you to your own PDS (asking for <code>atproto</code> only), returns, and its consent screen then offers <code>club.test</code> as signed in. Consent there is the club's, for the scopes this app asked for. What comes back is narrower.</div>
+${stockOutcomes.length ? `<h2>What happened</h2>
+<p class="muted">The last session ended: a delegated session whose delegate is removed cannot be used or refreshed, so the client drops it.</p>
+<table><tr><th>When</th><th>What</th><th>Outcome</th></tr>
+${stockOutcomes.map((o) => `<tr><td class="muted">${esc(o.at)}</td><td>${esc(o.what)}</td><td class="${o.ok ? "ok" : "no"}">${esc(o.status)} ${esc(o.detail)}</td></tr>`).join("")}</table>` : ""}`, flash));
+    }
+    const { session } = s;
+    const info = await session.getTokenInfo().catch(() => null);
+    // A delegated session whose delegate was removed cannot even be refreshed.
+    const who = await xrpc(session, "com.atproto.server.getSession").catch((err) => ({ status: 0, json: { error: "SessionUnusable", message: String(err?.message ?? err) } }));
+    const act = who.json.act?.sub as string | undefined;
+    res.send(page("A stock client", `
+<p>Signed in as <code>${esc(session.did)}</code> (<code>@${esc(who.json.handle ?? "?")}</code>).${act ? ` <b>Acting:</b> <code>${esc(act)}</code>, from <code>getSession</code>'s <code>act</code>.` : who.status === 200 ? " No <code>act</code>: this is the account's own session." : ` <span class="no">getSession → ${esc(who.status)} ${esc(who.json.error)}: ${esc(who.json.message ?? who.json.error_description ?? "")}</span>`} <form class="inline" method="post" action="/stock/sign-out"><button>Sign out</button></form></p>
+<p>Token scope: <code>${esc(info?.scope ?? "?")}</code><br><span class="muted">Asked for: <code>${esc(SCOPES.stock)}</code>${act ? ". The difference is the delegate's ceiling: only what the club allowed alice survives, and nothing but repo:, blob:, space: ever can." : ""}</span></p>
+
+<h2>Write as the account</h2>
+<form method="post" action="/stock/write">
+<p>
+<button name="what" value="accept">Accept a gallery into the pool</button> <span class="muted">an ordinary <code>createRecord</code>, <code>repo</code> = this session's own DID</span><br><br>
+<button name="what" value="post">Post</button> <span class="muted">creates <code>app.bsky.feed.post</code>; the app asked for it, ${act ? "the delegate may not" : "the account may"}</span>
+</p>
+</form>
+
+<h2>What happened</h2>
+<table><tr><th>When</th><th>What</th><th>Outcome</th></tr>
+${stockOutcomes.length ? stockOutcomes.map((o) => `<tr><td class="muted">${esc(o.at)}</td><td>${esc(o.what)}</td><td class="${o.ok ? "ok" : "no"}">${esc(o.status)} ${esc(o.detail)}</td></tr>`).join("") : `<tr><td colspan="3" class="muted">Nothing yet.</td></tr>`}
+</table>`, flash));
+  }));
+
+  app.post("/stock/write", wrap(async (req, res) => {
+    const s = await sessionFor(req, "stock");
+    if (!s) return void res.redirect("/stock");
+    const { session } = s;
+    const what = String(req.body.what ?? "accept");
+    const now = new Date().toISOString();
+    const collection = what === "post" ? "app.bsky.feed.post" : "social.grain.group.item";
+    const record = what === "post"
+      ? { $type: collection, text: "hello from the stock client", createdAt: now }
+      : { $type: collection, gallery: "at://did:plc:someone/social.grain.gallery/abc", createdAt: now };
+    const label = what === "post" ? "post" : "accept gallery";
+    // Nothing delegate-specific: the session's own DID as repo, like any client.
+    try {
+      const r = await xrpc(session, "com.atproto.repo.createRecord", { body: { repo: session.did, collection, record } });
+      stockOutcomes.unshift({ at: now, what: label, status: r.status, detail: r.status === 200 ? `committed: ${r.json.uri}` : `${r.json.error ?? ""}: ${r.json.message ?? r.json.error_description ?? ""}`, ok: r.status === 200 });
+      log(`  app: stock: ${label} → ${r.status} ${r.json.error ?? r.json.uri ?? ""}`);
+    } catch (err: any) {
+      // The OAuth client gives up on a session it cannot refresh: a delegate
+      // who was removed ends up here.
+      stockOutcomes.unshift({ at: now, what: label, status: 0, detail: `session unusable: ${err?.message ?? err}`, ok: false });
+      log(`  app: stock: ${label} → session unusable: ${err?.message ?? err}`);
+    }
+    res.redirect("/stock");
   }));
 
   const server = app.listen(port);

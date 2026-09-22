@@ -164,6 +164,47 @@ try {
   check("club createRecord with its own access token → 200", r.status === 200, `${r.status} ${r.json.error ?? ""}`);
   const log2 = await xrpc(pdsA.url, "com.atproto.server.listDelegatedWrites", { token: club.accessJwt });
   check("the club's log holds only delegated writes", log2.status === 200 && log2.json.writes.every((w: any) => w.delegate === alice.did), `${log2.json.writes.length} entries, all by alice`);
+
+  step("10. A community created from an app: alice, from her own PDS, creates riders.test on pds-a. No password, no email; she is its controller.");
+  const create = (who: Session, body: unknown) =>
+    serviceAuth(who, pdsA.did, "com.atproto.server.createDelegatedAccount").then((token) => xrpc(pdsA.url, "com.atproto.server.createDelegatedAccount", { token, body }));
+  r = await create(alice, { handle: "riders.test", controllers: [alice.did], delegates: [{ did: alice.did, permissions: ["repo:social.grain.group.item?action=create&action=delete"], label: "alice, founder" }] });
+  check("createDelegatedAccount → 200 with a new DID", r.status === 200 && String(r.json.did).startsWith("did:plc:"), `${r.status} ${JSON.stringify(r.json)}`);
+  const riders: string = r.json.did;
+  const doc = await fetch(`${plcUrl}/${riders}`).then((x) => x.json() as Promise<any>).catch(() => null);
+  check("the DID resolves: handle riders.test, hosted on pds-a", doc?.alsoKnownAs?.includes("at://riders.test") && doc?.service?.some((s: any) => s.serviceEndpoint === pdsA.url), JSON.stringify(doc?.service?.[0]?.serviceEndpoint));
+  r = await xrpc(pdsA.url, "com.atproto.server.createSession", { body: { identifier: "riders.test", password: "riders-pass" } });
+  check("the account has no password: createSession → 401", r.status === 401, `${r.status} ${r.json.error}`);
+  r = await writeAs(alice, pdsA.url, pdsA.did, riders, "social.grain.group.item", item);
+  check("alice, a delegate from creation, writes as riders → 200", r.status === 200 && String(r.json.uri).startsWith(`at://${riders}/`), `${r.status} ${r.json.error ?? ""}`);
+  r = await writeAs(bob, pdsA.url, pdsA.did, riders, "social.grain.group.item", item);
+  check("bob → 403 NotDelegate", r.status === 403 && r.json.error === "NotDelegate", `${r.status} ${r.json.error}`);
+  const manage = (who: Session, lxm: string, o: { body?: unknown; params?: Record<string, string> }) =>
+    serviceAuth(who, pdsA.did, lxm).then((token) => xrpc(pdsA.url, lxm, { token, ...o }));
+  r = await manage(alice, "com.atproto.server.putDelegate", { body: { account: riders, did: bob.did, permissions: ["repo:social.grain.group.item?action=create"], label: "bob" } });
+  check("alice, as controller, adds bob by service auth from her own session → 200", r.status === 200 && r.json.did === bob.did, `${r.status} ${JSON.stringify(r.json)}`);
+  r = await writeAs(bob, pdsA.url, pdsA.did, riders, "social.grain.group.item", item);
+  check("bob now writes as riders → 200", r.status === 200, `${r.status} ${r.json.error ?? ""}`);
+  r = await manage(bob, "com.atproto.server.removeDelegate", { body: { account: riders, did: alice.did } });
+  check("bob, a delegate but not a controller, cannot manage → 403 NotController", r.status === 403 && r.json.error === "NotController", `${r.status} ${r.json.error}`);
+  r = await manage(alice, "com.atproto.server.getDelegateConfig", { params: { account: riders } });
+  check("the config names alice as controller and both as delegates", r.status === 200 && r.json.controllers?.[0] === alice.did && r.json.delegates?.length === 2, `${r.status} ${JSON.stringify(r.json)}`);
+  r = await manage(alice, "com.atproto.server.updateDelegateConfig", { body: { account: riders, controllers: [alice.did, bob.did] } });
+  check("alice makes bob a controller too", r.status === 200 && r.json.controllers?.includes(bob.did), `${r.status} ${JSON.stringify(r.json)}`);
+  r = await manage(bob, "com.atproto.server.removeDelegate", { body: { account: riders, did: alice.did } });
+  check("bob, now a controller, removes alice as a delegate → 200", r.status === 200, `${r.status} ${r.json.error ?? ""}`);
+  r = await writeAs(alice, pdsA.url, pdsA.did, riders, "social.grain.group.item", item);
+  check("alice can no longer write as riders → 403 NotDelegate (she is still a controller)", r.status === 403 && r.json.error === "NotDelegate", `${r.status} ${r.json.error}`);
+  r = await manage(bob, "com.atproto.server.updateDelegateConfig", { body: { account: riders, controllers: [] } });
+  check("clearing every controller of an account with no credentials → 400 LastController", r.status === 400 && r.json.error === "LastController", `${r.status} ${r.json.error}`);
+  r = await xrpc(pdsA.url, "com.atproto.server.updateDelegateConfig", { token: club.accessJwt, body: { controllers: [] } });
+  check("the club, which has a password, may have no controllers at all", r.status === 200 && r.json.controllers?.length === 0, `${r.status} ${JSON.stringify(r.json)}`);
+  r = await create(alice, { handle: "riders.test", controllers: [alice.did] });
+  check("the handle is taken → 400 HandleNotAvailable", r.status === 400 && r.json.error === "HandleNotAvailable", `${r.status} ${r.json.error}`);
+  r = await create(alice, { handle: "other.test", controllers: [bob.did] });
+  check("a caller who is not among the controllers → 403 NotController", r.status === 403 && r.json.error === "NotController", `${r.status} ${r.json.error}`);
+  r = await xrpc(pdsA.url, "com.atproto.server.createDelegatedAccount", { token: alice.accessJwt, body: { handle: "other.test", controllers: [alice.did] } });
+  check("an access token, not service auth → 401", r.status === 401, `${r.status} ${r.json.error}`);
 } catch (err) {
   failures++;
   console.error("\nUnexpected error:", err);
